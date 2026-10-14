@@ -10,13 +10,27 @@
 
 > 仅供个人学习和备份自己有权观看的内容。视频版权归原作者所有，请遵守 B 站用户协议，不要传播下载的内容。
 
+## 一键启动（不用命令行）
+
+1. 在本页点击绿色的 **Code** 按钮 → **Download ZIP**，然后解压到任意文件夹。
+2. 双击里面的 **`一键启动.bat`**。
+3. 浏览器会自动打开下载页面：粘贴视频链接 → 解析 → 选择清晰度和保存位置 → 开始下载。
+
+第一次运行时，如果电脑上没有 Python 或 ffmpeg，它会询问是否自动安装（通过 Windows 自带的 winget，按回车表示同意）。使用期间请不要关闭那个黑色窗口，关掉窗口程序就退出了；没下完的部分下次会接着下。
+
+> 双击时如果 Windows 弹出「无法验证发布者」或 SmartScreen 提示，那是因为文件是从网上下载的。点「运行」或「更多信息 → 仍要运行」即可。脚本内容都是公开的，可以先用记事本打开看看。
+
+想要 720P 及以上清晰度，需要先登录，见下面的[登录](#登录720p-及以上需要)一节。
+
 ## 环境要求
 
 - Windows 10/11（核心下载逻辑跨平台，但启动脚本、选择文件夹和开机自启目前只适配了 Windows）
 - Python 3.10 及以上，不需要安装任何第三方包
 - [ffmpeg](https://ffmpeg.org/)：`winget install Gyan.FFmpeg`。程序会先在 PATH 里找，再找 WinGet 的安装目录。
 
-## 快速开始
+用「一键启动」时，这两样都会自动检查。
+
+## 命令行用法速览
 
 ```powershell
 git clone <本仓库地址> bilidl
@@ -109,6 +123,7 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 | `bilidl_web.py` | 本地网页服务（标准库 `ThreadingHTTPServer`） |
 | `bilidl_web.html` | 网页前端，单文件，没有外部依赖，支持浅色/深色模式 |
 | `bilidl.cmd` / `bilidl-web.cmd` | Windows 命令行启动器 |
+| `一键启动.bat` / `launch.ps1` | 双击启动：检查并可自动安装 Python 和 ffmpeg，然后启动网页界面 |
 | `install-autostart.ps1` | 安装或取消开机自启 |
 | `docs/DEVNOTES.md` | 开发笔记：踩过的坑、核心 API、网页界面设计 |
 | `docs/SPEEDUP.md` | 提速方案和测量数据 |
