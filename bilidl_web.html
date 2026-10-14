@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bilidl 下载器</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --text: #1d2129; --muted: #6b7280; --line: #e3e5e8;
+  --accent: #00a1d6; --accent-text: #ffffff; --accent-soft: #e3f4fa;
+  --ok: #1a9f53; --warn: #d97706; --err: #d93636; --track: #e8eaed; --input: #ffffff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181b; --card: #212226; --text: #e6e7ea; --muted: #9a9ea6; --line: #33353b;
+    --accent: #23ade5; --accent-text: #0b1014; --accent-soft: #15323e;
+    --ok: #3ccf7c; --warn: #f0a33a; --err: #f06262; --track: #34363c; --input: #18191c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
+header h1 { font-size: 20px; margin: 0; flex: 1; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 16px 0 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row { display: flex; gap: 8px; }
+.row input { flex: 1; min-width: 0; }
+.row.threads { align-items: center; }
+.row.threads input { flex: 0 0 80px; }
+.row.threads .hint { margin: 0; }
+input[type=text], input[type=password], input[type=number] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--input); color: var(--text); font: inherit; }
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text);
+  font: inherit; cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.small { padding: 2px 10px; font-size: 12px; }
+button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
+.badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); cursor: pointer; background: var(--card); }
+.badge.vip { border-color: var(--accent); color: var(--accent); }
+.badge.off { color: var(--warn); border-color: var(--warn); }
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.err { color: var(--err); }
+.meta { margin-top: 14px; }
+.meta b { font-size: 15px; }
+.meta span { color: var(--muted); margin-left: 8px; }
+.quals { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.qual { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.qual:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.qual input { margin-top: 3px; }
+.qual .qn { font-weight: 600; }
+.qual .qd { color: var(--muted); font-size: 12px; }
+.qual .qs { font-size: 13px; }
+.pages { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.prow { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.prow:last-child { border-bottom: 0; }
+.prow .pn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .pd, .prow .ps { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.prow .ps { width: 72px; text-align: right; }
+.bar { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+.bar.done > div { background: var(--ok); }
+.bar.bad > div { background: var(--err); }
+.bar.stop > div { background: var(--muted); }
+.job { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+.jhead { display: flex; gap: 8px; align-items: baseline; }
+.jtitle { flex: 1; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--track); flex-shrink: 0; }
+.pill.running { background: var(--accent-soft); color: var(--accent); }
+.pill.done { color: var(--ok); }
+.pill.failed, .pill.partial { color: var(--err); }
+.jsub, .jlog { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jsub { margin: 2px 0 8px; }
+.jstats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+.jbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.jpages { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.jp { display: grid; grid-template-columns: minmax(0, 1fr) 140px 120px; gap: 10px; align-items: center; padding: 3px 0; font-size: 13px; }
+.jp .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jp .s { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.jp .e { grid-column: 1 / -1; color: var(--err); font-size: 12px; word-break: break-all; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: calc(100% - 32px); }
+#toast.show { opacity: .95; }
+#toast.bad { background: var(--err); color: #fff; }
+[hidden] { display: none !important; }
+@media (max-width: 560px) {
+  .jp { grid-template-columns: minmax(0, 1fr) 90px; }
+  .jp .s { grid-column: 1 / -1; }
+  .prow .pd { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>bilidl 下载器</h1>
+    <span id="badge" class="badge" title="点击更新登录 cookie">检查登录…</span>
+  </header>
+
+  <section id="cookiePanel" class="card" hidden>
+    <h2>更新登录（SESSDATA）</h2>
+    <div class="row">
+      <input id="sess" type="password" placeholder="粘贴 SESSDATA 的值" autocomplete="off">
+      <button id="saveSess" class="primary">保存</button>
+    </div>
+    <div class="hint">在浏览器登录 bilibili.com 后，按 F12 → 应用/Application → Cookie，复制 SESSDATA 的值。未登录最高 480P，1080P60 及以上需要大会员。</div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <input id="url" type="text" placeholder="视频链接 / BV 号 / b23.tv 短链" autocomplete="off">
+      <button id="parse" class="primary">解析</button>
+    </div>
+    <div id="parseMsg" class="hint"></div>
+
+    <div id="info" hidden>
+      <div class="meta"><b id="vtitle"></b><span id="vowner"></span><span id="vcount"></span></div>
+      <h3>清晰度 <span id="qhint" style="font-weight:400"></span></h3>
+      <div id="quals" class="quals"></div>
+      <h3>分P
+        <button id="selAll" class="small">全选</button><button id="selNone" class="small">全不选</button>
+        <span id="selSum" style="font-weight:400"></span>
+      </h3>
+      <div id="pages" class="pages"></div>
+    </div>
+
+    <h3>保存目录</h3>
+    <div class="row">
+      <input id="dir" type="text" placeholder="例如 D:\Videos" autocomplete="off">
+      <button id="browse">浏览…</button>
+      <button id="openDir">打开</button>
+    </div>
+    <div id="dirHint" class="hint"></div>
+
+    <h3>线程数</h3>
+    <div class="row threads">
+      <input id="threads" type="number" min="1" max="32" step="1" value="16">
+      <span class="hint" id="threadsHint">B 站 CDN 按连接限速（每个连接约 1.5 MB/s），线程越多越快；默认 16，太多容易被风控。</span>
+    </div>
+    <button id="start" class="primary big" disabled>开始下载</button>
+  </section>
+
+  <section class="card">
+    <h2>任务</h2>
+    <p id="noJobs" class="hint">还没有任务。一次只下载一个任务，任务内逐个分P下载。</p>
+    <div id="jobs"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const TOKEN = "__TOKEN__";
+const $ = id => document.getElementById(id);
+let info = null;            // 当前解析结果
+let ffmpegOk = true;
+let MAX_THREADS = 32;
+
+// ---------- 工具 ----------
+async function api(path, body) {
+  const opt = { method: body === undefined ? "GET" : "POST", headers: { "X-Token": TOKEN } };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  let r;
+  try { r = await fetch(path, opt); } catch (e) { throw new Error("连不上本地服务，bilidl-web 是否已关闭？"); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+let toastTimer;
+function toast(msg, bad) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "", bad ? 5000 : 2500);
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function fmtBytes(b) {
+  if (!b) return "0 MB";
+  if (b >= 1e9) return (b / 1e9).toFixed(2) + " GB";
+  return (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + " MB";
+}
+function fmtDur(s) {
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  const pad = n => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+function fmtEta(s) {
+  if (s == null || !isFinite(s)) return "—";
+  if (s < 60) return Math.ceil(s) + " 秒";
+  if (s < 3600) return Math.round(s / 60) + " 分钟";
+  return Math.floor(s / 3600) + " 小时 " + Math.round(s % 3600 / 60) + " 分";
+}
+
+// ---------- 登录状态 ----------
+function showLogin(s) {
+  const b = $("badge");
+  if (s.login === null || s.login === undefined) { b.textContent = "登录状态未知"; b.className = "badge off"; b.title = s.error || ""; return; }
+  if (!s.login) { b.textContent = "未登录（最高 480P）"; b.className = "badge off"; return; }
+  b.textContent = (s.vip ? "大会员 · " : "已登录 · ") + s.uname;
+  b.className = "badge" + (s.vip ? " vip" : "");
+  b.title = "点击更新登录 cookie";
+}
+$("badge").onclick = () => { $("cookiePanel").hidden = !$("cookiePanel").hidden; if (!$("cookiePanel").hidden) $("sess").focus(); };
+$("saveSess").onclick = async () => {
+  const v = $("sess").value.trim();
+  if (!v) return toast("请先粘贴 SESSDATA", true);
+  $("saveSess").disabled = true;
+  try {
+    const s = await api("/api/cookie", { sessdata: v });
+    $("sess").value = ""; showLogin(s); $("cookiePanel").hidden = true;
+    toast(s.login ? "已保存，登录成功" : "已保存，但 B 站显示未登录，cookie 可能已过期", !s.login);
+    if (info) toast("登录状态变了，请重新解析视频以更新可用清晰度");
+  } catch (e) { toast(e.message, true); }
+  $("saveSess").disabled = false;
+};
+
+// ---------- 解析 ----------
+async function parse() {
+  const url = $("url").value.trim();
+  if (!url) return toast("请输入视频链接或 BV 号", true);
+  $("parse").disabled = true; $("parseMsg").className = "hint"; $("parseMsg").textContent = "解析中…（会抽样几个分P测码率，需要几秒）";
+  try {
+    info = await api("/api/info", { url });
+    $("parseMsg").textContent = "";
+    renderInfo();
+  } catch (e) {
+    $("parseMsg").className = "hint err"; $("parseMsg").textContent = e.message;
+  }
+  $("parse").disabled = false;
+}
+$("parse").onclick = parse;
+$("url").addEventListener("keydown", e => { if (e.key === "Enter") parse(); });
+
+function estBytes(kbps, dur) { return (kbps + info.audio_kbps) * 125 * dur; }
+
+function renderInfo() {
+  $("info").hidden = false;
+  $("vtitle").textContent = info.title;
+  $("vowner").textContent = info.owner ? "UP：" + info.owner : "";
+  const total = info.pages.reduce((a, p) => a + p.dur, 0);
+  $("vcount").textContent = `${info.pages.length} 个分P · 总时长 ${fmtDur(total)}`;
+
+  // 清晰度：默认 720P，不可用则取不超过 720P 的最高清晰度
+  const qs = info.qualities;
+  const avail = qs.map(q => q.qn);
+  const def = Math.max(...avail.filter(x => x <= 64), Math.min(...avail));
+  const box = $("quals"); box.textContent = "";
+  for (const q of qs) {
+    const lab = el("label", "qual");
+    const r = el("input"); r.type = "radio"; r.name = "q"; r.value = q.qn; r.checked = q.qn === def;
+    r.onchange = updateSizes;
+    const d = el("div");
+    d.append(el("div", "qn", q.name), el("div", "qd", `${q.codec} · ${q.res} · ${Math.round(q.kbps)} kbps`));
+    const s = el("div", "qs"); s.dataset.qn = q.qn;
+    d.append(s); lab.append(r, d); box.append(lab);
+  }
+  $("qhint").textContent = qs.length ? "" : "没有可用清晰度";
+
+  const pbox = $("pages"); pbox.textContent = "";
+  for (const p of info.pages) {
+    const row = el("label", "prow");
+    const c = el("input"); c.type = "checkbox"; c.value = p.page;
+    c.checked = info.url_page ? p.page === info.url_page : true;
+    c.onchange = updateSizes;
+    const ps = el("span", "ps"); ps.dataset.dur = p.dur;
+    row.append(c, el("span", "pn", `P${p.page}  ${p.part}`), el("span", "pd", fmtDur(p.dur)), ps);
+    pbox.append(row);
+  }
+  updateSizes();
+}
+
+function selectedPages() { return [...document.querySelectorAll("#pages input:checked")].map(c => +c.value); }
+function selectedQn() { const r = document.querySelector("#quals input:checked"); return r ? +r.value : null; }
+
+function updateSizes() {
+  if (!info) return;
+  const sel = new Set(selectedPages());
+  const dur = info.pages.filter(p => sel.has(p.page)).reduce((a, p) => a + p.dur, 0);
+  const qn = selectedQn();
+  const q = info.qualities.find(x => x.qn === qn);
+  const base = info.qualities.find(x => x.qn === 64);
+  for (const s of document.querySelectorAll("#quals .qs")) {
+    const qq = info.qualities.find(x => x.qn === +s.dataset.qn);
+    let t = "约 " + fmtBytes(estBytes(qq.kbps, dur));
+    if (base && qq.qn !== 64 && dur) t += `（720P 的 ${(estBytes(qq.kbps, 1) / estBytes(base.kbps, 1)).toFixed(1)} 倍）`;
+    s.textContent = t;
+  }
+  for (const s of document.querySelectorAll("#pages .ps")) s.textContent = q ? fmtBytes(estBytes(q.kbps, +s.dataset.dur)) : "";
+  $("selSum").textContent = `已选 ${sel.size}/${info.pages.length} 个，${fmtDur(dur)}` + (q ? `，约 ${fmtBytes(estBytes(q.kbps, dur))}` : "");
+  updateDirHint();
+  $("start").disabled = !sel.size || !q || !ffmpegOk;
+}
+$("selAll").onclick = e => { e.preventDefault(); document.querySelectorAll("#pages input").forEach(c => c.checked = true); updateSizes(); };
+$("selNone").onclick = e => { e.preventDefault(); document.querySelectorAll("#pages input").forEach(c => c.checked = false); updateSizes(); };
+
+// ---------- 保存目录 ----------
+function updateDirHint() {
+  const d = $("dir").value.trim().replace(/[\\/]+$/, "");
+  const h = $("dirHint");
+  if (!ffmpegOk) { h.className = "hint err"; h.textContent = "找不到 ffmpeg，无法封装视频。请先运行：winget install Gyan.FFmpeg，然后重启 bilidl-web。"; return; }
+  h.className = "hint";
+  if (!info || !d) { h.textContent = ""; return; }
+  const safe = s => s.replace(/[\\/:*?"<>|\r\n]/g, "_").trim();
+  h.textContent = info.pages.length > 1
+    ? `多P视频会在此目录下新建文件夹：${d}\\${safe(info.title)}\\，每P一个 mp4`
+    : `将保存为：${d}\\${safe(info.title)}.mp4`;
+}
+$("dir").addEventListener("input", updateDirHint);
+$("browse").onclick = async () => {
+  $("browse").disabled = true;
+  try {
+    const r = await api("/api/pick_folder", { initial: $("dir").value.trim() });
+    if (r.path) { $("dir").value = r.path; updateDirHint(); }
+  } catch (e) { toast(e.message, true); }
+  $("browse").disabled = false;
+};
+async function openFolder(path) {
+  try { await api("/api/open", { path }); } catch (e) { toast(e.message, true); }
+}
+$("openDir").onclick = () => openFolder($("dir").value.trim());
+
+// ---------- 开始下载 ----------
+$("start").onclick = async () => {
+  const out_dir = $("dir").value.trim();
+  if (!out_dir) return toast("请选择保存目录", true);
+  $("start").disabled = true;
+  try {
+    const threads = +$("threads").value;
+    if (!(threads >= 1 && threads <= MAX_THREADS && Number.isInteger(threads))) throw new Error(`线程数需要是 1~${MAX_THREADS} 的整数`);
+    await api("/api/download", { bvid: info.bvid, pages: selectedPages(), qn: selectedQn(), out_dir, threads });
+    toast("已加入下载队列");
+    poll();
+  } catch (e) { toast(e.message, true); }
+  updateSizes();
+};
+
+// ---------- 任务列表（按 id 原地更新，不整块重绘） ----------
+const JOB_TEXT = { queued: "排队中", running: "下载中", done: "完成", partial: "部分失败", failed: "失败", cancelled: "已取消" };
+const PAGE_TEXT = { queued: "排队", done: "完成", exists: "已存在", failed: "失败", cancelled: "已取消" };
+const views = new Map();
+
+function makeJob(j) {
+  const v = { root: el("div", "job"), pages: [] };
+  const head = el("div", "jhead");
+  v.title = el("span", "jtitle"); v.pill = el("span", "pill");
+  head.append(v.title, v.pill);
+  v.sub = el("div", "jsub");
+  v.bar = el("div", "bar"); v.fill = el("div"); v.bar.append(v.fill);
+  v.stats = el("div", "jstats");
+  v.pct = el("span"); v.size = el("span"); v.speed = el("span"); v.eta = el("span"); v.cnt = el("span"); v.node = el("span");
+  v.stats.append(v.pct, v.size, v.speed, v.eta, v.cnt, v.node);
+  v.log = el("div", "jlog");
+  const btns = el("div", "jbtns");
+  v.toggle = el("button", "small", "展开分P");
+  v.cancel = el("button", "small", "取消");
+  v.retry = el("button", "small", "重试");
+  v.open = el("button", "small", "打开文件夹");
+  v.remove = el("button", "small", "移除");
+  btns.append(v.toggle, v.cancel, v.retry, v.open, v.remove);
+  v.plist = el("div", "jpages"); v.plist.hidden = true;
+  for (const p of j.pages) {
+    const pv = { root: el("div", "jp") };
+    pv.n = el("span", "n", `P${p.page}  ${p.part}`); pv.n.title = p.part;
+    pv.bar = el("div", "bar"); pv.fill = el("div"); pv.bar.append(pv.fill);
+    pv.s = el("span", "s"); pv.e = el("div", "e"); pv.e.hidden = true;
+    pv.root.append(pv.n, pv.bar, pv.s, pv.e);
+    v.plist.append(pv.root); v.pages.push(pv);
+  }
+  v.root.append(head, v.sub, v.bar, v.stats, v.log, btns, v.plist);
+  const id = j.id;
+  v.toggle.onclick = () => { v.plist.hidden = !v.plist.hidden; v.toggle.textContent = v.plist.hidden ? "展开分P" : "收起分P"; };
+  v.cancel.onclick = () => act("/api/cancel", id);
+  v.retry.onclick = () => act("/api/retry", id);
+  v.remove.onclick = () => act("/api/remove", id);
+  v.open.onclick = () => openFolder(v.folder);
+  if (j.pages.length === 1) v.toggle.hidden = true;
+  return v;
+}
+async function act(path, id) {
+  try { await api(path, { id }); poll(); } catch (e) { toast(e.message, true); }
+}
+function setText(node, t) { if (node.textContent !== t) node.textContent = t; }
+function barClass(state) {
+  return "bar" + ({ done: " done", exists: " done", failed: " bad", partial: " bad", cancelled: " stop" }[state] || "");
+}
+
+function updateJob(v, j) {
+  v.folder = j.folder;
+  setText(v.title, j.title); v.title.title = j.title;
+  const st = j.cancelling ? "正在取消…" : JOB_TEXT[j.status] || j.status;
+  setText(v.pill, st); v.pill.className = "pill " + j.status;
+  setText(v.sub, `${j.quality} · ${j.workers} 线程 · ${j.folder}`); v.sub.title = j.folder;
+  const pct = j.total ? Math.min(100, j.done / j.total * 100) : 0;
+  v.fill.style.width = pct.toFixed(1) + "%";
+  v.bar.className = barClass(j.status);
+  setText(v.pct, pct.toFixed(1) + "%");
+  setText(v.size, `${fmtBytes(j.done)} / ${j.status === "done" ? "" : "约 "}${fmtBytes(j.total)}`);
+  setText(v.speed, j.status === "running" ? `速度 ${(j.speed / 1e6).toFixed(2)} MB/s` : "");
+  setText(v.eta, j.status === "running" ? `剩余 ${fmtEta(j.eta)}` : "");
+  const fin = j.pages.filter(p => p.state === "done" || p.state === "exists").length;
+  setText(v.cnt, `分P ${fin}/${j.pages.length}`);
+  setText(v.node, j.status === "running" && j.node ? "节点 " + j.node.replace(/\.bilivideo\.com$|\.akamaized\.net$/, "") : "");
+  v.node.title = j.node || "";
+  setText(v.log, j.error || j.log); v.log.className = "jlog" + (j.error ? " err" : ""); v.log.title = j.log;
+  v.cancel.disabled = !(j.status === "queued" || (j.status === "running" && !j.cancelling));
+  v.retry.disabled = !["failed", "partial", "cancelled"].includes(j.status);
+  v.remove.disabled = j.status === "running";
+  j.pages.forEach((p, i) => {
+    const pv = v.pages[i];
+    const pp = p.total ? Math.min(100, p.done / p.total * 100) : 0;
+    pv.fill.style.width = (p.state === "done" || p.state === "exists" ? 100 : pp).toFixed(1) + "%";
+    pv.bar.className = barClass(p.state);
+    let s = p.state === "running" ? (p.stage || "下载中") : PAGE_TEXT[p.state] || p.state;
+    if (p.state === "running" || ((p.state === "cancelled" || p.state === "failed") && p.done))
+      s += ` ${pp.toFixed(0)}% · ${fmtBytes(p.done)}/${fmtBytes(p.total)}`;
+    else if (p.state === "done" || p.state === "exists") s += " · " + fmtBytes(p.total) + (p.qname ? " · " + p.qname : "");
+    else s += " · 约 " + fmtBytes(p.total);
+    setText(pv.s, s);
+    pv.e.hidden = !p.error; setText(pv.e, p.error);
+  });
+  // 有失败的分P时自动展开，方便看到原因
+  if (j.pages.length > 1 && j.pages.some(p => p.error) && !v.autoOpened) {
+    v.autoOpened = true; v.plist.hidden = false; v.toggle.textContent = "收起分P";
+  }
+}
+
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    const { jobs } = await api("/api/jobs");
+    const seen = new Set();
+    for (const j of jobs) {
+      seen.add(j.id);
+      let v = views.get(j.id);
+      if (!v) { v = makeJob(j); views.set(j.id, v); $("jobs").prepend(v.root); }
+      updateJob(v, j);
+    }
+    for (const [id, v] of views) if (!seen.has(id)) { v.root.remove(); views.delete(id); }
+    $("noJobs").hidden = jobs.length > 0;
+  } catch (e) { /* 服务暂时不可用时静默，下一秒再试 */ }
+  polling = false;
+}
+
+// ---------- 启动 ----------
+(async () => {
+  try {
+    const s = await api("/api/status");
+    showLogin(s);
+    ffmpegOk = s.ffmpeg;
+    if (!$("dir").value) $("dir").value = s.default_dir;
+    MAX_THREADS = s.max_threads; $("threads").max = s.max_threads; $("threads").value = s.threads;
+    updateDirHint();
+  } catch (e) { toast(e.message, true); }
+  poll();
+  setInterval(poll, 1000);
+  $("url").focus();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# 登录凭证：绝对不要提交
+sessdata.txt
+
+# 本机运行数据
+config.json
+config.json.tmp
+*.log
+
+# 下载产物和断点续传记录
+*.mp4
+*.m4s
+*.state.json
+*.state.json.tmp
+
+# Python
+__pycache__/
+*.pyc
