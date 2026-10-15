@@ -6,6 +6,7 @@
 - **多线程分段下载**：B 站 CDN 对每个连接单独限速（每个约 1.5 MB/s），所以默认开 16 个线程，并把链接换到更快的 CDN 节点。在作者的网络环境下，速度从约 2 MB/s 提升到约 24 MB/s。
 - **断点续传**：中途取消或程序被关掉，下次会接着下。
 - **每个分P一个 mp4**：音视频用 ffmpeg 封装在一起，不重新编码。
+- **字幕**：可以同时下载 B 站的人工字幕和 AI 字幕，存成和视频同名的 .srt，也可以只下字幕（需要登录）。
 - **网页界面**：选择清晰度时能看到各档的估算大小，可以勾选分P、选择保存目录，并实时查看进度、速度和剩余时间。
 
 <p align="center"><img src="docs/images/web-ui.png" alt="bilidl 网页界面：解析视频后选择清晰度（显示各档估算大小）、勾选分P、选择保存目录和线程数" width="760"></p>
@@ -50,7 +51,7 @@ python bilidl_web.py
 
 ## 登录（720P 及以上需要）
 
-未登录时最高只能下 480P；登录后可以下 720P/1080P；1080P60 及以上需要大会员。
+未登录时最高只能下 480P；登录后可以下 720P/1080P；1080P60 及以上需要大会员。未登录时 B 站也不返回任何字幕（包括 AI 字幕）。
 
 1. 在浏览器里登录 bilibili.com，按 F12 打开开发者工具，进入「应用/Application」→「Cookie」，复制 `SESSDATA` 的值。
 2. 用下面任意一种方式保存：
@@ -63,7 +64,8 @@ cookie 只保存在本机的 `sessdata.txt` 里，这个文件已经写进 `.git
 
 ```
 bilidl <链接或BV号> [-q 清晰度] [-p 分P] [-o 目录] [-j 线程数] [--codec avc|hevc|av1]
-bilidl <链接或BV号> --info           只显示各清晰度的大小，不下载
+bilidl <链接或BV号> --sub [auto|all|语言] [--sub-only]
+bilidl <链接或BV号> --info           只显示各清晰度的大小和字幕，不下载
 bilidl --set-cookie <SESSDATA>
 ```
 
@@ -73,6 +75,8 @@ bilidl --set-cookie <SESSDATA>
 | `-p` | 例如 `1` 或 `1,3-5`；默认下载全部分P（链接里带 `?p=N` 时只下第 N P） |
 | `-o` | 保存目录，默认是当前目录。多P视频会在里面新建一个以标题命名的子文件夹 |
 | `-j` | 并发线程数，默认 16，最多 32。线程越多越快，但太多容易被 CDN 风控 |
+| `--sub` | 同时下载字幕，存成 `<视频名>.<语言>.srt`。`auto`（不写值时的默认）：全部人工字幕，没有人工字幕时用 AI 识别的字幕；`all`：全部，包括 AI 翻译；也可以写语言代码，如 `zh,en`（`zh` 能匹配 `zh-CN`、`zh-Hans` 和 `ai-zh`）或 `ai-zh` |
+| `--sub-only` | 只下载字幕，不下视频，不需要 ffmpeg。没写 `--sub` 时按 `auto` |
 
 支持的输入：BV 号、视频链接、b23.tv 短链。
 
@@ -86,7 +90,8 @@ python bilidl_web.py --no-browser # 只启动服务
 - 服务只监听 `127.0.0.1:8765`，其他设备访问不到。
 - 一次只下载一个任务，任务内一个分P下完再下下一个，带宽集中在当前分P上。
 - 「浏览…」按钮会弹出 Windows 原生的选择文件夹对话框（使用 tkinter）。
-- 上次用的保存目录和线程数会记在 `config.json` 里；第一次使用时默认保存到用户的「下载」文件夹。
+- 解析后会列出可用的字幕（人工 / AI 识别 / AI 翻译），可以选择是否一起下载，或者只下字幕。
+- 上次用的保存目录、线程数和字幕选项会记在 `config.json` 里；第一次使用时默认保存到用户的「下载」文件夹。
 
 ### 开机自动在后台运行
 
@@ -129,12 +134,14 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 | `install-autostart.ps1` | 安装或取消开机自启 |
 | `docs/DEVNOTES.md` | 开发笔记：踩过的坑、核心 API、网页界面设计 |
 | `docs/SPEEDUP.md` | 提速方案和测量数据 |
+| `docs/SUBTITLES.md` | 字幕接口的实测情况，以及 B 站不提供字幕时的替代方案 |
 | `tests/` | 手动验收脚本（会真实访问 B 站），见 [tests/README.md](tests/README.md) |
 
 ## 已知限制
 
 - B 站的风控策略会变：`/x/web-interface/view` 接口经常返回 412，这时会改用 `pagelist` 接口获取分P列表，再从主站网页取标题；主站也连不上时，就用 BV 号当标题。
 - 只支持普通视频（BV 号），不支持番剧、课程和直播。
+- 字幕只能下载 B 站已有的（人工或 AI 字幕）。约三成视频连 AI 字幕都没有，替代方案见 [docs/SUBTITLES.md](docs/SUBTITLES.md)。
 - CDN 节点的快慢和网络环境有关，`FAST_HOSTS` 是在作者的网络下测出来的。
 
 ## License

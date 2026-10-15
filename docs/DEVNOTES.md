@@ -12,6 +12,7 @@
   - 取标题时要注意：网页是 gzip 压缩的；标题后面不一定带「_哔哩哔哩」；要做 HTML 反转义；主站返回错误页时，标题会是「视频去哪了呢？」，这时改用 BV 号当标题。
   - 一些现成的下载工具（例如 BBDown 1.6.3）就是卡在 view 接口的 412 上。
 - **清晰度权限**：游客最高 480P，登录后可以下 720P/1080P，1080P60 及以上需要大会员。
+- **字幕**：游客拿不到任何字幕；不签名的 `/x/player/v2` 偶尔返回别的视频的 AI 字幕，要用带 WBI 签名的 `/x/player/wbi/v2`。详见 [SUBTITLES.md](SUBTITLES.md)。
 - **CDN**：
   - 每个连接下载 1~2 MB 后会被服务器断开，所以按 1 MB 分段，用 Range 请求，失败后自动重试。
   - 签名链接会过期，遇到 403/404 时要重新请求 playurl 刷新链接。
@@ -38,6 +39,11 @@
   - `Stream` 对象的 `.label/.size/.done/.net/.host/.status` 字段会在下载线程里实时更新，网页服务直接读取它们来计算进度和速度。`.net` 只统计这次实际从网络下载的字节，续传时已有的部分不算在内。
   - 调用 `cancel.set()` 后会抛出 `Cancelled`。
   - 断点续传：进度记录在 `*.m4s.state.json` 里，原子写入；新建文件后会立刻写一次，防止进程被强杀后，内容全是 0 的文件被当成已经下完。
+- 字幕：
+  - `api.wbi_query(params)`：返回带 WBI 签名的 query 字符串，密钥缓存 1 小时。
+  - `list_subtitles(api, bvid, cid)`：返回 `[{lan, name, url, ai, translated}]`。
+  - `select_subtitles(subs, spec)`：`spec` 是 `auto` / `all` / 逗号分隔的语言代码。
+  - `download_subtitles(api, bvid, cid, folder, name, spec, duration, log)`：存成 `<name>.<lan>.srt`，返回 `(已保存的语言, 说明)`。没有字幕不抛异常，说明里写原因；已存在的 .srt 不重新下载。
 - 其他：`QUALITY`（命令行清晰度名 → qn）、`QN_NAME`、`find_ffmpeg()`、`parse_pages()`。
 
 ## 网页界面（bilidl_web.py）
@@ -55,9 +61,10 @@
 - **接口**：
   - `GET /api/status`、`GET /api/jobs`
   - `POST /api/info`：解析结果按 bvid 缓存
-  - `POST /api/download`
+  - `POST /api/download`：`subs` 是 `off` / `auto` / `all`，`sub_only` 为真时只下字幕
   - `POST /api/cancel`、`/api/retry`、`/api/remove`、`/api/pick_folder`、`/api/open`、`/api/cookie`
 - **任务队列**：只有一个工作线程，一次只下一个任务，任务内逐个分P下载。同一个文件已经在未结束的任务里时，拒绝重复提交。
+- **字幕**：每个分P先下字幕再下视频；字幕失败只记在 `sub_msg` 里，不影响视频。解析时只查一个分P的字幕给用户参考，下载时每个分P单独查。单P任务看不到分P行，所以任务这一级也显示字幕结果。
 - **进度**：
   - 任务总大小 = 已知的流实际大小 + 尚未开始的部分按码率估算的大小。
   - 速度由采样线程每秒对 `Stream.net` 取样，用最近约 5 秒的增量计算。

@@ -8,6 +8,8 @@ config.json.tmp
 
 # 下载产物和断点续传记录
 *.mp4
+*.srt
+*.srt.tmp
 *.m4s
 *.state.json
 *.state.json.tmp

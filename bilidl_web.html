@@ -33,6 +33,11 @@ h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 16px 0 8px;
 .row.threads { align-items: center; }
 .row.threads input { flex: 0 0 80px; }
 .row.threads .hint { margin: 0; }
+.row.subs { align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.row.subs label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+select { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--input); color: var(--text); font: inherit; }
+.tag { display: inline-block; font-size: 12px; padding: 0 6px; margin: 2px 4px 0 0; border-radius: 4px; background: var(--track); }
+.tag.human { background: var(--accent-soft); color: var(--accent); }
 input[type=text], input[type=password], input[type=number] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--input); color: var(--text); font: inherit; }
 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -129,6 +134,16 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
         <span id="selSum" style="font-weight:400"></span>
       </h3>
       <div id="pages" class="pages"></div>
+      <h3>字幕</h3>
+      <div class="row subs">
+        <select id="subMode">
+          <option value="off">不下载字幕</option>
+          <option value="auto">人工字幕，没有时用 AI 识别字幕</option>
+          <option value="all">全部（含 AI 翻译）</option>
+        </select>
+        <label><input id="subOnly" type="checkbox">只下载字幕，不下视频</label>
+      </div>
+      <div id="subHint" class="hint"></div>
     </div>
 
     <h3>保存目录</h3>
@@ -278,8 +293,32 @@ function renderInfo() {
     row.append(c, el("span", "pn", `P${p.page}  ${p.part}`), el("span", "pd", fmtDur(p.dur)), ps);
     pbox.append(row);
   }
+  renderSubs();
   updateSizes();
 }
+
+function renderSubs() {
+  const h = $("subHint"); h.textContent = "";
+  h.className = "hint";
+  const where = info.pages.length > 1 ? `P${info.sub_page} ` : "";
+  if (info.subs === null) { h.textContent = `获取${where}字幕列表失败，下载时会再试一次`; return; }
+  if (!info.subs.length) {
+    h.textContent = info.login ? `${where}B 站没有给这个视频提供字幕（人工和 AI 字幕都没有）`
+                               : "未登录时 B 站不返回字幕（包括 AI 字幕），请先点击右上角登录";
+    if (!info.login) h.className = "hint err";
+    return;
+  }
+  h.append(`${where}可用字幕：`);
+  for (const t of info.subs) {
+    const kind = t.translated ? "AI 翻译" : t.ai ? "AI 识别" : "人工";
+    const tag = el("span", "tag" + (t.ai ? "" : " human"), `${t.name} · ${kind}`); tag.title = t.lan;
+    h.append(tag);
+  }
+  if (info.pages.length > 1) h.append(el("div", "", "其他分P下载时单独查询；字幕存成和视频同名的 .srt，播放器会自动加载。"));
+  else h.append(el("div", "", "字幕存成和视频同名的 .srt，播放器会自动加载。"));
+}
+$("subMode").onchange = () => { if ($("subMode").value === "off") $("subOnly").checked = false; updateSizes(); };
+$("subOnly").onchange = () => { if ($("subOnly").checked && $("subMode").value === "off") $("subMode").value = "auto"; updateSizes(); };
 
 function selectedPages() { return [...document.querySelectorAll("#pages input:checked")].map(c => +c.value); }
 function selectedQn() { const r = document.querySelector("#quals input:checked"); return r ? +r.value : null; }
@@ -298,9 +337,11 @@ function updateSizes() {
     s.textContent = t;
   }
   for (const s of document.querySelectorAll("#pages .ps")) s.textContent = q ? fmtBytes(estBytes(q.kbps, +s.dataset.dur)) : "";
-  $("selSum").textContent = `已选 ${sel.size}/${info.pages.length} 个，${fmtDur(dur)}` + (q ? `，约 ${fmtBytes(estBytes(q.kbps, dur))}` : "");
+  const subOnly = $("subOnly").checked;
+  $("selSum").textContent = `已选 ${sel.size}/${info.pages.length} 个，${fmtDur(dur)}` + (q && !subOnly ? `，约 ${fmtBytes(estBytes(q.kbps, dur))}` : "");
   updateDirHint();
-  $("start").disabled = !sel.size || !q || !ffmpegOk;
+  $("start").textContent = subOnly ? "开始下载字幕" : "开始下载";
+  $("start").disabled = !sel.size || !q || (!ffmpegOk && !subOnly);
 }
 $("selAll").onclick = e => { e.preventDefault(); document.querySelectorAll("#pages input").forEach(c => c.checked = true); updateSizes(); };
 $("selNone").onclick = e => { e.preventDefault(); document.querySelectorAll("#pages input").forEach(c => c.checked = false); updateSizes(); };
@@ -309,13 +350,14 @@ $("selNone").onclick = e => { e.preventDefault(); document.querySelectorAll("#pa
 function updateDirHint() {
   const d = $("dir").value.trim().replace(/[\\/]+$/, "");
   const h = $("dirHint");
-  if (!ffmpegOk) { h.className = "hint err"; h.textContent = "找不到 ffmpeg，无法封装视频。请先运行：winget install Gyan.FFmpeg，然后重启 bilidl-web。"; return; }
+  if (!ffmpegOk && !$("subOnly").checked) { h.className = "hint err"; h.textContent = "找不到 ffmpeg，无法封装视频。请先运行：winget install Gyan.FFmpeg，然后重启 bilidl-web。"; return; }
   h.className = "hint";
   if (!info || !d) { h.textContent = ""; return; }
   const safe = s => s.replace(/[\\/:*?"<>|\r\n]/g, "_").trim();
+  const subOnly = $("subOnly").checked;
   h.textContent = info.pages.length > 1
-    ? `多P视频会在此目录下新建文件夹：${d}\\${safe(info.title)}\\，每P一个 mp4`
-    : `将保存为：${d}\\${safe(info.title)}.mp4`;
+    ? `多P视频会在此目录下新建文件夹：${d}\\${safe(info.title)}\\，每P一个 ${subOnly ? "或多个 srt" : "mp4"}`
+    : `将保存为：${d}\\${safe(info.title)}.${subOnly ? "<语言>.srt" : "mp4"}`;
 }
 $("dir").addEventListener("input", updateDirHint);
 $("browse").onclick = async () => {
@@ -339,7 +381,8 @@ $("start").onclick = async () => {
   try {
     const threads = +$("threads").value;
     if (!(threads >= 1 && threads <= MAX_THREADS && Number.isInteger(threads))) throw new Error(`线程数需要是 1~${MAX_THREADS} 的整数`);
-    await api("/api/download", { bvid: info.bvid, pages: selectedPages(), qn: selectedQn(), out_dir, threads });
+    await api("/api/download", { bvid: info.bvid, pages: selectedPages(), qn: selectedQn(), out_dir, threads,
+                                 subs: $("subMode").value, sub_only: $("subOnly").checked });
     toast("已加入下载队列");
     poll();
   } catch (e) { toast(e.message, true); }
@@ -360,7 +403,8 @@ function makeJob(j) {
   v.bar = el("div", "bar"); v.fill = el("div"); v.bar.append(v.fill);
   v.stats = el("div", "jstats");
   v.pct = el("span"); v.size = el("span"); v.speed = el("span"); v.eta = el("span"); v.cnt = el("span"); v.node = el("span");
-  v.stats.append(v.pct, v.size, v.speed, v.eta, v.cnt, v.node);
+  v.subs = el("span");
+  v.stats.append(v.pct, v.size, v.speed, v.eta, v.cnt, v.node, v.subs);
   v.log = el("div", "jlog");
   const btns = el("div", "jbtns");
   v.toggle = el("button", "small", "展开分P");
@@ -401,16 +445,20 @@ function updateJob(v, j) {
   setText(v.title, j.title); v.title.title = j.title;
   const st = j.cancelling ? "正在取消…" : JOB_TEXT[j.status] || j.status;
   setText(v.pill, st); v.pill.className = "pill " + j.status;
-  setText(v.sub, `${j.quality} · ${j.workers} 线程 · ${j.folder}`); v.sub.title = j.folder;
-  const pct = j.total ? Math.min(100, j.done / j.total * 100) : 0;
+  const what = j.sub_only ? "只下字幕" : `${j.quality} · ${j.workers} 线程` + (j.subs !== "off" ? " · 含字幕" : "");
+  setText(v.sub, `${what} · ${j.folder}`); v.sub.title = j.folder;
+  // 只下字幕的任务没有可估的大小，进度按完成的分P数算
+  const fin = j.pages.filter(p => p.state === "done" || p.state === "exists").length;
+  const pct = j.sub_only ? fin / j.pages.length * 100 : j.total ? Math.min(100, j.done / j.total * 100) : 0;
   v.fill.style.width = pct.toFixed(1) + "%";
   v.bar.className = barClass(j.status);
   setText(v.pct, pct.toFixed(1) + "%");
-  setText(v.size, `${fmtBytes(j.done)} / ${j.status === "done" ? "" : "约 "}${fmtBytes(j.total)}`);
-  setText(v.speed, j.status === "running" ? `速度 ${(j.speed / 1e6).toFixed(2)} MB/s` : "");
-  setText(v.eta, j.status === "running" ? `剩余 ${fmtEta(j.eta)}` : "");
-  const fin = j.pages.filter(p => p.state === "done" || p.state === "exists").length;
+  setText(v.size, j.sub_only ? "" : `${fmtBytes(j.done)} / ${j.status === "done" ? "" : "约 "}${fmtBytes(j.total)}`);
+  const live = j.status === "running" && !j.sub_only;
+  setText(v.speed, live ? `速度 ${(j.speed / 1e6).toFixed(2)} MB/s` : "");
+  setText(v.eta, live ? `剩余 ${fmtEta(j.eta)}` : "");
   setText(v.cnt, `分P ${fin}/${j.pages.length}`);
+  setText(v.subs, subSummary(j)); v.subs.title = j.pages.map(p => p.sub_msg).filter(Boolean).join("\n");
   setText(v.node, j.status === "running" && j.node ? "节点 " + j.node.replace(/\.bilivideo\.com$|\.akamaized\.net$/, "") : "");
   v.node.title = j.node || "";
   setText(v.log, j.error || j.log); v.log.className = "jlog" + (j.error ? " err" : ""); v.log.title = j.log;
@@ -425,15 +473,30 @@ function updateJob(v, j) {
     let s = p.state === "running" ? (p.stage || "下载中") : PAGE_TEXT[p.state] || p.state;
     if (p.state === "running" || ((p.state === "cancelled" || p.state === "failed") && p.done))
       s += ` ${pp.toFixed(0)}% · ${fmtBytes(p.done)}/${fmtBytes(p.total)}`;
-    else if (p.state === "done" || p.state === "exists") s += " · " + fmtBytes(p.total) + (p.qname ? " · " + p.qname : "");
+    else if (j.sub_only && p.state === "done") s += " · " + (p.subs.length ? p.subs.join(", ") : "无字幕");
+    else if (p.state === "done" || p.state === "exists") s += " · " + fmtBytes(p.total) + (p.qname ? " · " + p.qname : "")
+      + (p.subs.length ? " · 字幕 " + p.subs.join(", ") : "");
     else s += " · 约 " + fmtBytes(p.total);
     setText(pv.s, s);
+    pv.s.title = p.sub_msg;
     pv.e.hidden = !p.error; setText(pv.e, p.error);
   });
   // 有失败的分P时自动展开，方便看到原因
   if (j.pages.length > 1 && j.pages.some(p => p.error) && !v.autoOpened) {
     v.autoOpened = true; v.plist.hidden = false; v.toggle.textContent = "收起分P";
   }
+}
+
+// 单P任务看不到分P行，字幕结果要在任务这一级显示
+function subSummary(j) {
+  if (j.subs === "off") return "";
+  const tried = j.pages.filter(p => p.sub_msg);
+  if (!tried.length) return "";
+  if (j.pages.length === 1) {
+    const p = j.pages[0];
+    return p.subs.length ? "字幕 " + p.subs.join(", ") : p.sub_msg;
+  }
+  return `有字幕的分P ${tried.filter(p => p.subs.length).length}/${tried.length}`;
 }
 
 let polling = false;
@@ -463,6 +526,7 @@ async function poll() {
     ffmpegOk = s.ffmpeg;
     if (!$("dir").value) $("dir").value = s.default_dir;
     MAX_THREADS = s.max_threads; $("threads").max = s.max_threads; $("threads").value = s.threads;
+    $("subMode").value = s.subs;
     updateDirHint();
   } catch (e) { toast(e.message, true); }
   poll();

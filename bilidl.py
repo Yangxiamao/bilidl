@@ -1,14 +1,14 @@
 """bilidl - Bilibili 视频下载器（只访问 api.bilibili.com 和 CDN，不依赖 www.bilibili.com）
 
 用法:
-  bilidl <链接或BV号> --info                 查看各清晰度大小，不下载
-  bilidl <链接或BV号> [-q 720] [-p 1,3-4] [-o 目录]
-  bilidl --set-cookie <SESSDATA>             保存登录 cookie（720P 及以上需要）
+  bilidl <链接或BV号> --info                 查看各清晰度大小和字幕，不下载
+  bilidl <链接或BV号> [-q 720] [-p 1,3-4] [-o 目录] [--sub [auto|all|zh,en]] [--sub-only]
+  bilidl --set-cookie <SESSDATA>             保存登录 cookie（720P 及以上、字幕需要）
   bilidl-web                                 打开网页界面
 
 清晰度 -q: 360 / 480 / 720 / 1080 / 1080+ / 1080p60 / 4k / best（默认 720；不可用时自动降到最接近的较低清晰度）
 """
-import argparse, glob, gzip, html as htmllib, json, os, queue, re, shutil, subprocess, sys, threading, time
+import argparse, glob, gzip, hashlib, html as htmllib, json, os, queue, re, shutil, subprocess, sys, threading, time
 import urllib.error, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -28,6 +28,11 @@ FAST_HOSTS = ["upos-sz-mirror08c.bilivideo.com",
               "upos-sz-mirrorali.bilivideo.com"]
 HOST_FAIL_LIMIT, HOST_COOLDOWN = 3, 60  # 节点连续失败 3 次就降到末尾，冷却 60 秒
 REFRESH_MIN_INTERVAL = 10               # 多个线程同时遇到过期链接时只刷新一次，避免 playurl 被 412
+# WBI 签名用的字符重排表（img_key + sub_key 按这个顺序取前 32 位）
+WBI_MIX = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39,
+           12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63,
+           57, 62, 11, 36, 20, 34, 44, 52]
+WBI_TTL = 3600  # 签名密钥每天换，缓存 1 小时足够
 
 
 class Cancelled(Exception):
@@ -57,6 +62,8 @@ class Api:
         spi = self._get("https://api.bilibili.com/x/frontend/finger/spi", self.base)["data"]
         self.guest = f"buvid3={spi['b_3']}; buvid4={spi['b_4']}"
         self.sess = open(COOKIE_FILE, encoding="utf-8").read().strip() if os.path.exists(COOKIE_FILE) else ""
+        self._wbi = (0.0, "")  # (获取时间, mixin key)
+        self._wbi_lock = threading.Lock()
 
     @staticmethod
     def _get(url, headers):
@@ -71,6 +78,19 @@ class Api:
     def nav(self):
         d = self.get("https://api.bilibili.com/x/web-interface/nav")["data"]
         return {"login": bool(d.get("isLogin")), "vip": bool(d.get("vipStatus")), "uname": d.get("uname", "")}
+
+    def wbi_query(self, params):
+        """返回带 WBI 签名（wts + w_rid）的 query 字符串。密钥来自 nav 接口里两张图片的文件名。"""
+        with self._wbi_lock:
+            t, key = self._wbi
+            if time.time() - t > WBI_TTL or not key:
+                w = self.get("https://api.bilibili.com/x/web-interface/nav")["data"]["wbi_img"]
+                raw = "".join(u.rsplit("/", 1)[1].split(".")[0] for u in (w["img_url"], w["sub_url"]))
+                key = "".join(raw[i] for i in WBI_MIX)[:32]
+                self._wbi = (time.time(), key)
+        params = {k: re.sub(r"[!'()*]", "", str(v)) for k, v in {**params, "wts": int(time.time())}.items()}
+        q = urllib.parse.urlencode(sorted(params.items()))
+        return q + "&w_rid=" + hashlib.md5((q + key).encode()).hexdigest()
 
 
 def resolve_target(s):
@@ -474,6 +494,116 @@ def download_page(api, bvid, cid, folder, name, qn, codec="avc", ffmpeg=None, ca
     return final, qname
 
 
+# ---------- 字幕 ----------
+# 字幕存成 <name>.<语言>.srt，和视频同名，播放器会自动加载。
+# 临时文件是 <name>.<语言>.srt.tmp，语言代码限长 16，保证不比 LONGEST_SUFFIX 长
+SUB_LAN_MAX = 16
+SUB_MODES = ("auto", "all")
+
+
+def list_subtitles(api, bvid, cid):
+    """返回一个分P的字幕轨 [{lan, name, url, ai, translated}]。lan 以 ai- 开头的是 AI 字幕，
+    translated 表示是 AI 从别的语言翻译来的。未登录时 B 站不返回任何字幕（包括 AI 字幕）。
+    用带 WBI 签名的 wbi/v2：不签名的 /x/player/v2 偶尔会返回别的视频的 AI 字幕。"""
+    d = api.get("https://api.bilibili.com/x/player/wbi/v2?" + api.wbi_query({"bvid": bvid, "cid": cid}))
+    if d.get("code"):
+        raise RuntimeError(f"获取字幕列表失败：{d.get('message')}")
+    out = []
+    for s in ((d.get("data") or {}).get("subtitle") or {}).get("subtitles") or []:
+        url = s.get("subtitle_url") or ""
+        if not url:  # AI 字幕还没生成好等情况
+            continue
+        lan = s.get("lan") or "und"
+        ai = lan.startswith("ai-")
+        out.append({"lan": lan, "name": s.get("lan_doc") or lan, "url": "https:" + url if url.startswith("//") else url,
+                    "ai": ai, "translated": ai and s.get("ai_type") == 1})
+    return out
+
+
+def select_subtitles(subs, spec="auto"):
+    """auto：全部人工字幕；没有人工字幕时取 AI 识别的原语言字幕（不含 AI 翻译）。all：全部。
+    其他：逗号分隔的语言代码，如 zh,en。zh 能匹配 zh-CN、zh-Hans 和 ai-zh；写 ai-zh 则只匹配 AI 字幕。"""
+    if spec == "all":
+        return list(subs)
+    if spec == "auto":
+        return [s for s in subs if not s["ai"]] or [s for s in subs if s["ai"] and not s["translated"]]
+    want = [w.strip().lower() for w in spec.split(",") if w.strip()]
+
+    def hit(lan):
+        lan = lan.lower()
+        for w in want:
+            base = lan if w.startswith("ai-") else lan.removeprefix("ai-")
+            if base == w or base.startswith(w + "-"):
+                return True
+        return False
+
+    return [s for s in subs if hit(s["lan"])]
+
+
+def srt_time(t):
+    ms = max(0, round(t * 1000))
+    return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def to_srt(body):
+    """B 站字幕 JSON 的 body（[{from, to, content}]）转成 SRT 文本。"""
+    out, n = [], 0
+    for c in body:
+        text = str(c.get("content") or "").strip()
+        if not text:
+            continue
+        n += 1
+        out += [str(n), f"{srt_time(c.get('from', 0))} --> {srt_time(c.get('to', 0))}", text, ""]
+    return "\n".join(out)
+
+
+def sub_path(folder, name, lan):
+    return os.path.join(folder, f"{name}.{safe(lan)[:SUB_LAN_MAX]}.srt")
+
+
+def download_subtitles(api, bvid, cid, folder, name, spec="auto", duration=None, log=log):
+    """下载一个分P的字幕。返回 (已保存的语言列表, 说明)；没有字幕不算错误，说明里会写原因。"""
+    subs = list_subtitles(api, bvid, cid)
+    chosen = select_subtitles(subs, spec)
+    if not chosen:
+        if subs:
+            msg = "没有符合条件的字幕，可用的有：" + ", ".join(s["lan"] for s in subs)
+        elif not api.sess:
+            msg = "没有字幕：未登录时 B 站不返回字幕，请先登录"
+        else:
+            msg = "B 站没有给这个视频提供字幕（人工和 AI 字幕都没有）"
+        log(f"{name}: {msg}")
+        return [], msg
+    os.makedirs(folder, exist_ok=True)
+
+    def fetch(s):
+        req = urllib.request.Request(s["url"], headers=api.base)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r).get("body") or []
+
+    todo = [s for s in chosen if not os.path.exists(sub_path(folder, name, s["lan"]))]
+    with ThreadPoolExecutor(4) as ex:  # 字幕服务器单个请求常要一两秒，多条字幕一起取
+        bodies = dict(zip((s["lan"] for s in todo), ex.map(fetch, todo)))
+    saved, skipped = [], []
+    for s in chosen:
+        path = sub_path(folder, name, s["lan"])
+        if s["lan"] in bodies:
+            body = bodies[s["lan"]]
+            last = max((c.get("to", 0) for c in body), default=0)
+            if duration and last > duration + 30:  # 万一接口又串台，别把别的视频的字幕存下来
+                skipped.append(s["lan"])
+                log(f"{name}: 字幕 {s['lan']} 比视频长很多（{last:.0f}s > {duration}s），疑似别的视频的字幕，已跳过")
+                continue
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8-sig") as f:  # 带 BOM，老一些的 Windows 播放器才能认出 UTF-8
+                f.write(to_srt(body))
+            os.replace(tmp, path)
+        saved.append(s["lan"])
+    msg = "字幕：" + (", ".join(saved) or "无") + (f"（跳过 {', '.join(skipped)}）" if skipped else "")
+    log(f"{name}: {msg}")
+    return saved, msg
+
+
 def cmd_info(api, bvid, title, pages):
     q, audio_kbps = probe_bitrates(api, bvid, pages)
     total_dur = sum(p[3] for p in pages)
@@ -483,6 +613,16 @@ def cmd_info(api, bvid, title, pages):
     for qn, (name, codec, res, kbps) in sorted(q.items(), reverse=True):
         size = (kbps + audio_kbps) * 1000 * total_dur / 8
         print(f"{name:<10}{codec:<7}{res:<11}{approx:>2}{size/1e9:>7.2f} GB")
+    page = pages[0][0]
+    try:
+        subs = list_subtitles(api, bvid, pages[0][2])
+    except Exception as e:
+        print(f"\nP{page} 的字幕：获取失败（{e}）")
+        return
+    print(f"\nP{page} 的字幕：" + ("" if subs else ("无（未登录时 B 站不返回字幕）" if not api.sess else "无")))
+    for s in subs:
+        kind = "AI 翻译" if s["translated"] else "AI 识别" if s["ai"] else "人工"
+        print(f"  {s['lan']:<10}{kind:<8}{s['name']}")
 
 
 def main():
@@ -496,7 +636,11 @@ def main():
     ap.add_argument("-j", "--threads", type=int, default=WORKERS,
                     help=f"并发线程数（默认 {WORKERS}，最多 {MAX_WORKERS}；CDN 按连接限速，线程越多越快，但太多容易被风控）")
     ap.add_argument("--codec", default="avc", choices=CODEC_PREF, help="偏好编码（默认 avc，兼容性最好）")
-    ap.add_argument("--info", action="store_true", help="只显示各清晰度大小，不下载")
+    ap.add_argument("--sub", nargs="?", const="auto", metavar="auto|all|语言",
+                    help="同时下载字幕（存成同名 .srt，需要登录）。auto（默认）：人工字幕，没有时用 AI 识别字幕；"
+                         "all：全部，包括 AI 翻译；也可以写语言代码，如 zh,en 或 ai-zh")
+    ap.add_argument("--sub-only", action="store_true", help="只下载字幕，不下载视频（不需要 ffmpeg）")
+    ap.add_argument("--info", action="store_true", help="只显示各清晰度大小和字幕，不下载")
     ap.add_argument("--set-cookie", metavar="SESSDATA", help="保存登录 cookie 的 SESSDATA 值")
     args = ap.parse_args()
     if not 1 <= args.threads <= MAX_WORKERS:
@@ -525,8 +669,15 @@ def main():
         cmd_info(api, bvid, title, pages)
         return
     folder, name = output_layout(title, n_total, args.out)
-    for page, part, cid, _ in pages:
-        download_page(api, bvid, cid, folder, name(page, part), QUALITY[args.quality], args.codec, workers=args.threads)
+    sub = args.sub or ("auto" if args.sub_only else None)
+    for page, part, cid, dur in pages:
+        if sub:
+            try:
+                download_subtitles(api, bvid, cid, folder, name(page, part), sub, dur)
+            except Exception as e:  # 字幕失败不影响下载视频
+                log(f"P{page} 字幕下载失败:", e)
+        if not args.sub_only:
+            download_page(api, bvid, cid, folder, name(page, part), QUALITY[args.quality], args.codec, workers=args.threads)
     log("全部完成:", folder)
 
 
