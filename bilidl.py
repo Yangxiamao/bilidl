@@ -2,7 +2,7 @@
 
 用法:
   bilidl <链接或BV号> --info                 查看各清晰度大小和字幕，不下载
-  bilidl <链接或BV号> [-q 720] [-p 1,3-4] [-o 目录] [--sub [auto|all|zh,en]] [--sub-only]
+  bilidl <链接或BV号> [-q 720] [-p 1,3-4] [-o 目录] [--sub [auto|all|zh,en]] [--danmaku] [--sub-only]
   bilidl --set-cookie <SESSDATA>             保存登录 cookie（720P 及以上、字幕需要）
   bilidl-web                                 打开网页界面
 
@@ -71,9 +71,17 @@ class Api:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
 
-    def get(self, url, login=True):
+    def _headers(self, login):
         cookie = self.guest + (f"; SESSDATA={self.sess}" if login and self.sess else "")
-        return self._get(url, {**self.base, "Cookie": cookie})
+        return {**self.base, "Cookie": cookie}
+
+    def get(self, url, login=True):
+        return self._get(url, self._headers(login))
+
+    def get_bytes(self, url, login=True):
+        req = urllib.request.Request(url, headers=self._headers(login))
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read()
 
     def nav(self):
         d = self.get("https://api.bilibili.com/x/web-interface/nav")["data"]
@@ -604,6 +612,70 @@ def download_subtitles(api, bvid, cid, folder, name, spec="auto", duration=None,
     return saved, msg
 
 
+# ---------- 弹幕 ----------
+# 弹幕存成 <name>.danmaku.ass，播放器会和字幕一样自动加载。原始数据取自 protobuf 分段接口（每段 6 分钟，
+# 和 B 站客户端离线缓存里的 dm1、dm2… 是同样的数据），转 ASS 交给 biliass（pip install biliass，GPL-3.0）。
+DM_SEG = 360
+# 样式接近网页版：舞台 1920x1080 下 38px 约等于 720p 播放器里的 25px；只占画面上方 3/4，不挡底部字幕
+DM_STAGE = (1920, 1080)
+DM_STYLE = {"font_face": "Microsoft YaHei", "font_size": 38, "text_opacity": 0.8, "duration_marquee": 10.0,
+            "duration_still": 5.0, "display_region_ratio": 0.75, "reduce_comments": False}
+
+
+def danmaku_available():
+    """返回 (能否生成弹幕, 不能时的原因)。biliass 是可选依赖，没装时只是不能下弹幕。"""
+    try:
+        import biliass  # noqa: F401
+        return True, ""
+    except ImportError:
+        return False, "生成弹幕需要 biliass（Python 3.11+）：python -m pip install biliass"
+
+
+def fetch_danmaku(api, cid, duration):
+    """返回一个分P的全部弹幕分段（protobuf bytes 列表，空段已去掉）。"""
+    def seg(i):
+        try:
+            q = api.wbi_query({"type": 1, "oid": cid, "segment_index": i})
+            return api.get_bytes("https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?" + q)
+        except urllib.error.HTTPError:  # 签名版不可用时退回旧接口，返回的数据一样
+            return api.get_bytes(f"https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid={cid}&segment_index={i}")
+
+    n = max(1, -(-int(duration or 0) // DM_SEG))
+    with ThreadPoolExecutor(4) as ex:
+        return [b for b in ex.map(seg, range(1, n + 1)) if b]
+
+
+def dm_path(folder, name):
+    return os.path.join(folder, name + ".danmaku.ass")
+
+
+def download_danmaku(api, cid, folder, name, duration, log=log):
+    """下载一个分P的弹幕并转成 ASS。返回 (路径 或 None, 说明)；没有弹幕或没装 biliass 不算错误。"""
+    ok, why = danmaku_available()
+    if not ok:
+        log(f"{name}: {why}")
+        return None, why
+    path = dm_path(folder, name)
+    if os.path.exists(path):
+        log(f"{name}: 弹幕已存在，跳过")
+        return path, "弹幕：已存在"
+    segs = fetch_danmaku(api, cid, duration)
+    if not segs:
+        log(f"{name}: 没有弹幕")
+        return None, "没有弹幕"
+    import biliass
+    ass = biliass.convert_to_ass(segs, *DM_STAGE, input_format="protobuf", **DM_STYLE)
+    n = ass.count("\nDialogue:")
+    os.makedirs(folder, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8-sig") as f:
+        f.write(ass)
+    os.replace(tmp, path)
+    msg = f"弹幕：{n} 条"
+    log(f"{name}: {msg}")
+    return path, msg
+
+
 def cmd_info(api, bvid, title, pages):
     q, audio_kbps = probe_bitrates(api, bvid, pages)
     total_dur = sum(p[3] for p in pages)
@@ -639,7 +711,10 @@ def main():
     ap.add_argument("--sub", nargs="?", const="auto", metavar="auto|all|语言",
                     help="同时下载字幕（存成同名 .srt，需要登录）。auto（默认）：人工字幕，没有时用 AI 识别字幕；"
                          "all：全部，包括 AI 翻译；也可以写语言代码，如 zh,en 或 ai-zh")
-    ap.add_argument("--sub-only", action="store_true", help="只下载字幕，不下载视频（不需要 ffmpeg）")
+    ap.add_argument("--danmaku", action="store_true",
+                    help="同时下载弹幕（存成同名 .danmaku.ass，需要 python -m pip install biliass）")
+    ap.add_argument("--sub-only", action="store_true",
+                    help="只下载字幕/弹幕，不下载视频（不需要 ffmpeg）；没写 --danmaku 时默认 --sub auto")
     ap.add_argument("--info", action="store_true", help="只显示各清晰度大小和字幕，不下载")
     ap.add_argument("--set-cookie", metavar="SESSDATA", help="保存登录 cookie 的 SESSDATA 值")
     args = ap.parse_args()
@@ -669,13 +744,20 @@ def main():
         cmd_info(api, bvid, title, pages)
         return
     folder, name = output_layout(title, n_total, args.out)
-    sub = args.sub or ("auto" if args.sub_only else None)
+    sub = args.sub or ("auto" if args.sub_only and not args.danmaku else None)
+    if args.danmaku and not danmaku_available()[0]:
+        log(danmaku_available()[1])
     for page, part, cid, dur in pages:
         if sub:
             try:
                 download_subtitles(api, bvid, cid, folder, name(page, part), sub, dur)
             except Exception as e:  # 字幕失败不影响下载视频
                 log(f"P{page} 字幕下载失败:", e)
+        if args.danmaku:
+            try:
+                download_danmaku(api, cid, folder, name(page, part), dur)
+            except Exception as e:  # 弹幕失败也不影响下载视频
+                log(f"P{page} 弹幕下载失败:", e)
         if not args.sub_only:
             download_page(api, bvid, cid, folder, name(page, part), QUALITY[args.quality], args.codec, workers=args.threads)
     log("全部完成:", folder)

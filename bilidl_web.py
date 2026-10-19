@@ -81,6 +81,10 @@ def default_subs():
     return m if m in SUB_MODES else "auto"
 
 
+def default_danmaku():
+    return load_config().get("danmaku", True) is not False
+
+
 def default_threads():
     t = load_config().get("threads")
     return t if isinstance(t, int) and 1 <= t <= bilidl.MAX_WORKERS else bilidl.WORKERS
@@ -126,6 +130,7 @@ class PageTask:
         self.streams = []
         self.final_size = 0
         self.subs, self.sub_msg = [], ""  # 已保存的字幕语言；字幕的结果说明（没有字幕的原因等）
+        self.dm_file, self.dm_msg = None, ""  # 弹幕文件；弹幕的结果说明
 
     def on_streams(self, qname, streams):
         self.qname = qname
@@ -149,17 +154,17 @@ class PageTask:
         done, total = self.progress()
         return {"page": self.page, "part": self.part, "dur": self.dur, "state": self.state, "stage": self.stage,
                 "qname": self.qname, "error": self.error, "done": done, "total": total,
-                "subs": self.subs, "sub_msg": self.sub_msg}
+                "subs": self.subs, "sub_msg": self.sub_msg, "dm": bool(self.dm_file), "dm_msg": self.dm_msg}
 
 
 class Job:
     _ids = itertools.count(1)
 
-    def __init__(self, bvid, title, folder, qn, pages, workers, subs="off", sub_only=False):
+    def __init__(self, bvid, title, folder, qn, pages, workers, subs="off", sub_only=False, danmaku=False):
         self.id = next(Job._ids)
         self.bvid, self.title, self.folder, self.qn, self.pages = bvid, title, folder, qn, pages
         self.workers = workers
-        self.subs, self.sub_only = subs, sub_only
+        self.subs, self.sub_only, self.danmaku = subs, sub_only, danmaku
         self.status = "queued"  # queued / running / done / partial / failed / cancelled
         self.cancel = threading.Event()
         self.logs = collections.deque(maxlen=50)
@@ -185,6 +190,7 @@ class Job:
         return {"id": self.id, "bvid": self.bvid, "title": self.title, "folder": self.folder,
                 "quality": bilidl.QN_NAME.get(self.qn, str(self.qn)), "status": self.status,
                 "workers": self.workers, "node": node, "subs": self.subs, "sub_only": self.sub_only,
+                "danmaku": self.danmaku,
                 "cancelling": self.status == "running" and self.cancel.is_set(),
                 "done": done, "total": total, "speed": speed,
                 "eta": (total - done) / speed if speed > 1 else None,
@@ -222,21 +228,34 @@ def run_job(job):
         def on_stage(s, p=p):
             p.stage = s
 
+        # 字幕、弹幕失败都不影响下载视频；只下字幕/弹幕时算这个分P失败，可以重试
+        errors = []
         if job.subs != "off":
             p.stage = "下载字幕"
             try:
                 p.subs, p.sub_msg = bilidl.download_subtitles(api, job.bvid, p.cid, job.folder, p.name, job.subs,
                                                               p.dur, log=job.log)
-            except Exception as e:  # 字幕失败不影响下载视频；只下字幕时算这个分P失败，可以重试
+            except Exception as e:
                 p.subs, p.sub_msg = [], f"字幕下载失败：{friendly(e)}"
                 job.log(f"P{p.page} {p.sub_msg}")
-                if job.sub_only:
-                    p.state, p.stage, p.error = "failed", "", p.sub_msg
-                    continue
-            if job.sub_only:
-                p.final_size = sum(os.path.getsize(bilidl.sub_path(job.folder, p.name, lan)) for lan in p.subs)
-                p.state, p.stage = "done", ""
+                errors.append(p.sub_msg)
+        if job.danmaku:
+            p.stage = "下载弹幕"
+            try:
+                p.dm_file, p.dm_msg = bilidl.download_danmaku(api, p.cid, job.folder, p.name, p.dur, log=job.log)
+            except Exception as e:
+                p.dm_file, p.dm_msg = None, f"弹幕下载失败：{friendly(e)}"
+                job.log(f"P{p.page} {p.dm_msg}")
+                errors.append(p.dm_msg)
+        if job.sub_only:
+            if errors:
+                p.state, p.stage, p.error = "failed", "", "；".join(errors)
                 continue
+            p.final_size = sum(os.path.getsize(bilidl.sub_path(job.folder, p.name, lan)) for lan in p.subs)
+            if p.dm_file:
+                p.final_size += os.path.getsize(p.dm_file)
+            p.state, p.stage = "done", ""
+            continue
         try:
             path, qname = bilidl.download_page(api, job.bvid, p.cid, job.folder, p.name, job.qn, ffmpeg=FFMPEG,
                                                cancel=job.cancel, log=job.log, on_streams=p.on_streams,
@@ -291,7 +310,8 @@ def sampler():
 
 def api_status(_):
     out = {"default_dir": default_dir(), "threads": default_threads(), "max_threads": bilidl.MAX_WORKERS,
-           "subs": default_subs(),
+           "subs": default_subs(), "danmaku": default_danmaku(),
+           "danmaku_ok": bilidl.danmaku_available()[0], "danmaku_why": bilidl.danmaku_available()[1],
            "ffmpeg": bool(FFMPEG), "login": None, "vip": False, "uname": ""}
     try:
         out.update(get_api().nav())
@@ -357,10 +377,13 @@ def api_download(body):
         raise UserError(f"线程数需要在 1~{bilidl.MAX_WORKERS} 之间")
     subs = str(body.get("subs") or "off")
     sub_only = bool(body.get("sub_only"))
+    danmaku = bool(body.get("danmaku"))
     if subs not in SUB_MODES:
         raise UserError("字幕选项无效")
-    if sub_only and subs == "off":
-        raise UserError("只下载字幕时，字幕选项不能是「不下载」")
+    if danmaku and not bilidl.danmaku_available()[0]:
+        raise UserError(bilidl.danmaku_available()[1])
+    if sub_only and subs == "off" and not danmaku:
+        raise UserError("只下载字幕/弹幕时，字幕和弹幕至少要选一个")
     pages = [p for p in info["pages"] if p["page"] in sel]
     if not pages:
         raise UserError("请至少选择一个分P")
@@ -396,10 +419,12 @@ def api_download(body):
             if j.status in ("queued", "running") and any(
                     norm(os.path.join(j.folder, p.name)) in targets for p in j.pages if p.state == "queued" or p.state == "running"):
                 raise UserError(f"任务 #{j.id} 里已经有相同的文件在排队或下载")
-        job = Job(bvid, info["title"], folder, qn, tasks, workers, subs, sub_only)
+        job = Job(bvid, info["title"], folder, qn, tasks, workers, subs, sub_only, danmaku)
         JOBS[job.id] = job
-    save_config(last_dir=out_dir, threads=workers, subs=subs)
-    what = "只下字幕" if sub_only else f"{bilidl.QN_NAME[qn]}  {workers} 线程" + ("" if subs == "off" else "  含字幕")
+    dm_cfg = {"danmaku": danmaku} if bilidl.danmaku_available()[0] else {}  # 没装 biliass 时别把「关」记下来
+    save_config(last_dir=out_dir, threads=workers, subs=subs, **dm_cfg)
+    extras = ("" if subs == "off" else "  含字幕") + ("  含弹幕" if danmaku else "")
+    what = ("只下字幕/弹幕" + extras) if sub_only else f"{bilidl.QN_NAME[qn]}  {workers} 线程" + extras
     job.log(f"加入队列：{info['title']}  {len(tasks)} 个分P  {what}  -> {folder}")
     QUEUE.put(job)
     return {"id": job.id}
