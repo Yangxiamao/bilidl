@@ -10,6 +10,7 @@
 | `web_test.py <输出目录>` | 需要先启动 `bilidl_web.py --no-browser`。测 Host/token 校验、参数校验、下载、取消、重试、「已存在」、移除 | 约 30 MB |
 | `web_threads_test.py <输出目录>` | 需要先启动服务。测线程数设置的校验和当前节点显示 | 约 75 MB |
 | `sub_test.py <输出目录>` | 字幕选择规则和 SRT 格式（离线）、字幕列表多次请求是否一致、下载和跳过已存在、未登录时的提示。第 2、3 步需要登录 | 不到 1 MB |
+| `danmaku_test.py <输出目录>` | 多个 protobuf 分段一起转 ASS（离线）、联网下载和跳过已存在、没装 biliass 时的提示。需要先 `python -m pip install biliass` | 约 1 MB |
 
 注意：
 - 测试用的视频（`BV1GJ411x7h7`、`BV1Q24y1j7YT`）是写在脚本里的默认值，如果视频失效，需要换成别的 BV 号。

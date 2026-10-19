@@ -99,6 +99,18 @@ if (-not $ff) {
 }
 if ($ff) { Say "  ffmpeg: $ff" "Green" }
 
+# 弹幕组件 biliass（可选）。不能用 pip --user：服务用 python -I 运行，看不到用户目录里的包
+& $py -I -c "import biliass" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Say "没有找到弹幕组件 biliass（下载弹幕时需要，不装也能下视频和字幕）。" "Yellow"
+    if (Ask "现在安装 biliass 吗？（约 2 MB，需要联网）") {
+        & $py -m pip install --disable-pip-version-check biliass
+        & $py -I -c "import biliass" 2>$null
+    }
+    if ($LASTEXITCODE -ne 0) { Say "暂时没有 biliass：网页上的「下载弹幕」不可用。手动安装：$py -m pip install biliass" "Yellow" }
+}
+if ($LASTEXITCODE -eq 0) { Say "  biliass: 已安装" "Green" }
+
 # 选择文件夹的对话框需要 tkinter（官方安装包默认带）
 & $py -I -c "import tkinter" 2>$null
 if ($LASTEXITCODE -ne 0) { Say "提示：这个 Python 没有 tkinter，「浏览…」按钮不可用，可以直接在网页上输入保存路径。" "Yellow" }

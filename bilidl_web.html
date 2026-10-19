@@ -134,16 +134,18 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
         <span id="selSum" style="font-weight:400"></span>
       </h3>
       <div id="pages" class="pages"></div>
-      <h3>字幕</h3>
+      <h3>字幕和弹幕</h3>
       <div class="row subs">
         <select id="subMode">
           <option value="off">不下载字幕</option>
           <option value="auto">人工字幕，没有时用 AI 识别字幕</option>
           <option value="all">全部（含 AI 翻译）</option>
         </select>
-        <label><input id="subOnly" type="checkbox">只下载字幕，不下视频</label>
+        <label><input id="dmOn" type="checkbox">同时下载弹幕</label>
+        <label><input id="subOnly" type="checkbox">只下载字幕/弹幕，不下视频</label>
       </div>
       <div id="subHint" class="hint"></div>
+      <div id="dmHint" class="hint"></div>
     </div>
 
     <h3>保存目录</h3>
@@ -176,6 +178,7 @@ const TOKEN = "__TOKEN__";
 const $ = id => document.getElementById(id);
 let info = null;            // 当前解析结果
 let ffmpegOk = true;
+let dmOk = false, dmWhy = "";
 let MAX_THREADS = 32;
 
 // ---------- 工具 ----------
@@ -317,8 +320,16 @@ function renderSubs() {
   if (info.pages.length > 1) h.append(el("div", "", "其他分P下载时单独查询；字幕存成和视频同名的 .srt，播放器会自动加载。"));
   else h.append(el("div", "", "字幕存成和视频同名的 .srt，播放器会自动加载。"));
 }
-$("subMode").onchange = () => { if ($("subMode").value === "off") $("subOnly").checked = false; updateSizes(); };
-$("subOnly").onchange = () => { if ($("subOnly").checked && $("subMode").value === "off") $("subMode").value = "auto"; updateSizes(); };
+function extrasOff() { return $("subMode").value === "off" && !$("dmOn").checked; }
+$("subMode").onchange = $("dmOn").onchange = () => { if (extrasOff()) $("subOnly").checked = false; renderDm(); updateSizes(); };
+$("subOnly").onchange = () => { if ($("subOnly").checked && extrasOff()) $("subMode").value = "auto"; updateSizes(); };
+
+function renderDm() {
+  const h = $("dmHint");
+  if (!dmOk) { h.className = "hint err"; h.textContent = "不能下载弹幕：" + dmWhy; return; }
+  h.className = "hint";
+  h.textContent = $("dmOn").checked ? "弹幕存成和视频同名的 .danmaku.ass，PotPlayer、VLC 等播放器会自动加载。" : "";
+}
 
 function selectedPages() { return [...document.querySelectorAll("#pages input:checked")].map(c => +c.value); }
 function selectedQn() { const r = document.querySelector("#quals input:checked"); return r ? +r.value : null; }
@@ -340,7 +351,7 @@ function updateSizes() {
   const subOnly = $("subOnly").checked;
   $("selSum").textContent = `已选 ${sel.size}/${info.pages.length} 个，${fmtDur(dur)}` + (q && !subOnly ? `，约 ${fmtBytes(estBytes(q.kbps, dur))}` : "");
   updateDirHint();
-  $("start").textContent = subOnly ? "开始下载字幕" : "开始下载";
+  $("start").textContent = subOnly ? "开始下载字幕/弹幕" : "开始下载";
   $("start").disabled = !sel.size || !q || (!ffmpegOk && !subOnly);
 }
 $("selAll").onclick = e => { e.preventDefault(); document.querySelectorAll("#pages input").forEach(c => c.checked = true); updateSizes(); };
@@ -355,9 +366,10 @@ function updateDirHint() {
   if (!info || !d) { h.textContent = ""; return; }
   const safe = s => s.replace(/[\\/:*?"<>|\r\n]/g, "_").trim();
   const subOnly = $("subOnly").checked;
+  const extra = [$("subMode").value !== "off" && "<语言>.srt", $("dmOn").checked && "danmaku.ass"].filter(Boolean);
   h.textContent = info.pages.length > 1
-    ? `多P视频会在此目录下新建文件夹：${d}\\${safe(info.title)}\\，每P一个 ${subOnly ? "或多个 srt" : "mp4"}`
-    : `将保存为：${d}\\${safe(info.title)}.${subOnly ? "<语言>.srt" : "mp4"}`;
+    ? `多P视频会在此目录下新建文件夹：${d}\\${safe(info.title)}\\，每P一个 ${subOnly ? extra.map(x => x.replace("<语言>.", "")).join(" 和 ") : "mp4"}`
+    : `将保存为：${d}\\${safe(info.title)}.${subOnly ? extra.join(" / ") : "mp4"}`;
 }
 $("dir").addEventListener("input", updateDirHint);
 $("browse").onclick = async () => {
@@ -382,7 +394,7 @@ $("start").onclick = async () => {
     const threads = +$("threads").value;
     if (!(threads >= 1 && threads <= MAX_THREADS && Number.isInteger(threads))) throw new Error(`线程数需要是 1~${MAX_THREADS} 的整数`);
     await api("/api/download", { bvid: info.bvid, pages: selectedPages(), qn: selectedQn(), out_dir, threads,
-                                 subs: $("subMode").value, sub_only: $("subOnly").checked });
+                                 subs: $("subMode").value, sub_only: $("subOnly").checked, danmaku: $("dmOn").checked });
     toast("已加入下载队列");
     poll();
   } catch (e) { toast(e.message, true); }
@@ -445,7 +457,8 @@ function updateJob(v, j) {
   setText(v.title, j.title); v.title.title = j.title;
   const st = j.cancelling ? "正在取消…" : JOB_TEXT[j.status] || j.status;
   setText(v.pill, st); v.pill.className = "pill " + j.status;
-  const what = j.sub_only ? "只下字幕" : `${j.quality} · ${j.workers} 线程` + (j.subs !== "off" ? " · 含字幕" : "");
+  const extras = (j.subs !== "off" ? " · 含字幕" : "") + (j.danmaku ? " · 含弹幕" : "");
+  const what = j.sub_only ? "只下字幕/弹幕" + extras : `${j.quality} · ${j.workers} 线程` + extras;
   setText(v.sub, `${what} · ${j.folder}`); v.sub.title = j.folder;
   // 只下字幕的任务没有可估的大小，进度按完成的分P数算
   const fin = j.pages.filter(p => p.state === "done" || p.state === "exists").length;
@@ -458,7 +471,8 @@ function updateJob(v, j) {
   setText(v.speed, live ? `速度 ${(j.speed / 1e6).toFixed(2)} MB/s` : "");
   setText(v.eta, live ? `剩余 ${fmtEta(j.eta)}` : "");
   setText(v.cnt, `分P ${fin}/${j.pages.length}`);
-  setText(v.subs, subSummary(j)); v.subs.title = j.pages.map(p => p.sub_msg).filter(Boolean).join("\n");
+  setText(v.subs, [subSummary(j), dmSummary(j)].filter(Boolean).join(" · "));
+  v.subs.title = j.pages.flatMap(p => [p.sub_msg, p.dm_msg]).filter(Boolean).join("\n");
   setText(v.node, j.status === "running" && j.node ? "节点 " + j.node.replace(/\.bilivideo\.com$|\.akamaized\.net$/, "") : "");
   v.node.title = j.node || "";
   setText(v.log, j.error || j.log); v.log.className = "jlog" + (j.error ? " err" : ""); v.log.title = j.log;
@@ -473,12 +487,13 @@ function updateJob(v, j) {
     let s = p.state === "running" ? (p.stage || "下载中") : PAGE_TEXT[p.state] || p.state;
     if (p.state === "running" || ((p.state === "cancelled" || p.state === "failed") && p.done))
       s += ` ${pp.toFixed(0)}% · ${fmtBytes(p.done)}/${fmtBytes(p.total)}`;
-    else if (j.sub_only && p.state === "done") s += " · " + (p.subs.length ? p.subs.join(", ") : "无字幕");
+    else if (j.sub_only && p.state === "done") s += [j.subs !== "off" && (p.subs.length ? p.subs.join(", ") : "无字幕"),
+                                                     j.danmaku && p.dm_msg].filter(Boolean).map(x => " · " + x).join("");
     else if (p.state === "done" || p.state === "exists") s += " · " + fmtBytes(p.total) + (p.qname ? " · " + p.qname : "")
-      + (p.subs.length ? " · 字幕 " + p.subs.join(", ") : "");
+      + (p.subs.length ? " · 字幕 " + p.subs.join(", ") : "") + (p.dm_msg ? " · " + p.dm_msg : "");
     else s += " · 约 " + fmtBytes(p.total);
     setText(pv.s, s);
-    pv.s.title = p.sub_msg;
+    pv.s.title = [p.sub_msg, p.dm_msg].filter(Boolean).join("\n");
     pv.e.hidden = !p.error; setText(pv.e, p.error);
   });
   // 有失败的分P时自动展开，方便看到原因
@@ -497,6 +512,14 @@ function subSummary(j) {
     return p.subs.length ? "字幕 " + p.subs.join(", ") : p.sub_msg;
   }
   return `有字幕的分P ${tried.filter(p => p.subs.length).length}/${tried.length}`;
+}
+
+function dmSummary(j) {
+  if (!j.danmaku) return "";
+  const tried = j.pages.filter(p => p.dm_msg);
+  if (!tried.length) return "";
+  if (j.pages.length === 1) return tried[0].dm_msg;
+  return `有弹幕的分P ${tried.filter(p => p.dm).length}/${tried.length}`;
 }
 
 let polling = false;
@@ -527,6 +550,9 @@ async function poll() {
     if (!$("dir").value) $("dir").value = s.default_dir;
     MAX_THREADS = s.max_threads; $("threads").max = s.max_threads; $("threads").value = s.threads;
     $("subMode").value = s.subs;
+    dmOk = s.danmaku_ok; dmWhy = s.danmaku_why || "";
+    $("dmOn").checked = dmOk && s.danmaku; $("dmOn").disabled = !dmOk;
+    renderDm();
     updateDirHint();
   } catch (e) { toast(e.message, true); }
   poll();
