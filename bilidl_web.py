@@ -125,7 +125,8 @@ class PageTask:
     def __init__(self, page, part, cid, dur, name, est_v, est_a):
         self.page, self.part, self.cid, self.dur, self.name = page, part, cid, dur, name
         self.est_v, self.est_a = est_v, est_a
-        self.state = "queued"  # queued / running / done / exists / failed / cancelled
+        self.state = "queued"  # queued / running / done / exists / failed / cancelled / skipped（用户单独跳过）
+        self.cancel = threading.Event()  # 只停这一个分P；取消整个任务时也会设置正在下载的分P的
         self.stage, self.qname, self.error, self.path = "", None, "", None
         self.streams = []
         self.final_size = 0
@@ -154,6 +155,7 @@ class PageTask:
         done, total = self.progress()
         return {"page": self.page, "part": self.part, "dur": self.dur, "state": self.state, "stage": self.stage,
                 "qname": self.qname, "error": self.error, "done": done, "total": total,
+                "cancelling": self.state == "running" and self.cancel.is_set(),
                 "subs": self.subs, "sub_msg": self.sub_msg, "dm": bool(self.dm_file), "dm_msg": self.dm_msg}
 
 
@@ -182,8 +184,9 @@ class Job:
 
     def snapshot(self):
         pages = [p.snapshot() for p in self.pages]
-        done = sum(p["done"] for p in pages)
-        total = sum(p["total"] for p in pages)
+        kept = [p for p in pages if p["state"] != "skipped"]  # 跳过的分P不算进总进度
+        done = sum(p["done"] for p in kept)
+        total = sum(p["total"] for p in kept)
         speed = self.speed if self.status == "running" else 0
         node = next((st.host for p in self.pages if p.state == "running" for st in p.streams
                      if st.status == "running" and st.host), "")
@@ -198,7 +201,9 @@ class Job:
 
 
 def finish_status(job):
-    states = [p.state for p in job.pages]
+    states = [p.state for p in job.pages if p.state != "skipped"]
+    if not states:  # 全部跳过
+        return "cancelled"
     if all(s in ("done", "exists") for s in states):
         return "done"
     if "cancelled" in states:
@@ -217,13 +222,20 @@ def run_job(job):
             if p.state == "queued":
                 p.state, p.error = "failed", str(e)
         return
-    for p in job.pages:
-        if p.state != "queued":
-            continue
-        if job.cancel.is_set():
-            p.state = "cancelled"
-            continue
-        p.state, p.stage, p.error = "running", "准备", ""
+    while True:
+        # 每次重新找第一个排队的分P：下载中途跳过、恢复的分P都能照顾到。
+        # 没有排队的分P时在锁里直接结束任务，避免和「恢复」抢着改状态
+        with LOCK:
+            if job.cancel.is_set():
+                for q in job.pages:
+                    if q.state == "queued":
+                        q.state = "cancelled"
+            p = next((q for q in job.pages if q.state == "queued"), None)
+            if p is None:
+                job.status = finish_status(job)
+                return
+            p.state, p.stage, p.error = "running", "准备", ""
+            p.cancel = threading.Event()
 
         def on_stage(s, p=p):
             p.stage = s
@@ -247,6 +259,9 @@ def run_job(job):
                 p.dm_file, p.dm_msg = None, f"弹幕下载失败：{friendly(e)}"
                 job.log(f"P{p.page} {p.dm_msg}")
                 errors.append(p.dm_msg)
+        if p.cancel.is_set():  # 下字幕/弹幕时点了跳过或取消
+            p.state, p.stage = "cancelled" if job.cancel.is_set() else "skipped", ""
+            continue
         if job.sub_only:
             if errors:
                 p.state, p.stage, p.error = "failed", "", "；".join(errors)
@@ -258,13 +273,17 @@ def run_job(job):
             continue
         try:
             path, qname = bilidl.download_page(api, job.bvid, p.cid, job.folder, p.name, job.qn, ffmpeg=FFMPEG,
-                                               cancel=job.cancel, log=job.log, on_streams=p.on_streams,
+                                               cancel=p.cancel, log=job.log, on_streams=p.on_streams,
                                                on_stage=on_stage, workers=job.workers)
             p.path, p.final_size = path, os.path.getsize(path)
             p.state = "exists" if qname is None else "done"
         except bilidl.Cancelled:
-            p.state = "cancelled"
-            job.log(f"P{p.page} 已取消，下次重试会断点续传")
+            if job.cancel.is_set():
+                p.state = "cancelled"
+                job.log(f"P{p.page} 已取消，下次重试会断点续传")
+            else:
+                p.state = "skipped"
+                job.log(f"P{p.page} 已跳过，恢复后会断点续传")
         except Exception as e:
             p.state, p.error = "failed", friendly(e)
             job.log(f"P{p.page} 失败：{p.error}")
@@ -284,7 +303,8 @@ def worker():
         except Exception as e:  # 兜底，保证工作线程不会死
             job.error = friendly(e)
         with LOCK:
-            job.status = finish_status(job)
+            if job.status == "running":  # 正常结束时 run_job 已经设好了
+                job.status = finish_status(job)
         job.log("任务结束：", job.status)
 
 
@@ -413,12 +433,8 @@ def api_download(body):
     tasks = [PageTask(p["page"], p["part"], p["cid"], p["dur"], name_fn(p["page"], p["part"]),
                       vk * 125 * p["dur"], ak * 125 * p["dur"]) for p in pages]
 
-    with LOCK:  # 同一个文件不能同时在两个未结束的任务里
-        targets = {norm(os.path.join(folder, t.name)) for t in tasks}
-        for j in JOBS.values():
-            if j.status in ("queued", "running") and any(
-                    norm(os.path.join(j.folder, p.name)) in targets for p in j.pages if p.state == "queued" or p.state == "running"):
-                raise UserError(f"任务 #{j.id} 里已经有相同的文件在排队或下载")
+    with LOCK:
+        check_busy(folder, tasks)
         job = Job(bvid, info["title"], folder, qn, tasks, workers, subs, sub_only, danmaku)
         JOBS[job.id] = job
     dm_cfg = {"danmaku": danmaku} if bilidl.danmaku_available()[0] else {}  # 没装 biliass 时别把「关」记下来
@@ -428,6 +444,15 @@ def api_download(body):
     job.log(f"加入队列：{info['title']}  {len(tasks)} 个分P  {what}  -> {folder}")
     QUEUE.put(job)
     return {"id": job.id}
+
+
+def check_busy(folder, tasks, me=None):
+    """同一个文件不能同时在两个未结束的任务里。调用时要持有 LOCK。"""
+    targets = {norm(os.path.join(folder, t.name)) for t in tasks}
+    for j in JOBS.values():
+        if j is not me and j.status in ("queued", "running") and any(
+                norm(os.path.join(j.folder, p.name)) in targets for p in j.pages if p.state in ("queued", "running")):
+            raise UserError(f"任务 #{j.id} 里已经有相同的文件在排队或下载")
 
 
 def find_job(body):
@@ -458,9 +483,61 @@ def api_cancel(body):
                     p.state = "cancelled"
         elif job.status == "running":
             job.cancel.set()
+            for p in job.pages:
+                if p.state == "running":
+                    p.cancel.set()
             job.log("正在取消…")
         else:
             raise UserError("任务已结束")
+    return {"ok": True}
+
+
+def find_page(body):
+    job = find_job(body)
+    try:
+        n = int(body.get("page"))
+    except (TypeError, ValueError):
+        raise UserError("参数错误")
+    p = next((p for p in job.pages if p.page == n), None)
+    if not p:
+        raise UserError("这个任务里没有这一P", 404)
+    return job, p
+
+
+def api_skip(body):
+    """跳过一个分P：排队的直接标记，正在下载的打断（已下的部分留着，恢复后续传）。"""
+    job, p = find_page(body)
+    with LOCK:
+        if p.state == "queued":
+            p.state = "skipped"
+            if job.status == "queued" and not any(q.state == "queued" for q in job.pages):
+                job.status = finish_status(job)  # 排队的任务一P都不剩了，直接结束
+        elif p.state == "running":
+            if p.cancel.is_set():
+                raise UserError("正在跳过这一P")
+            p.cancel.set()
+        else:
+            raise UserError("这一P已经结束，不能跳过")
+    job.log(f"跳过 P{p.page}")
+    return {"ok": True}
+
+
+def api_unskip(body):
+    """恢复跳过的分P。任务还没结束就排回队里；已经结束的任务重新排队，只下这一P。"""
+    job, p = find_page(body)
+    with LOCK:
+        if p.state != "skipped":
+            raise UserError("这一P没有被跳过")
+        check_busy(job.folder, [p], me=job)
+        p.state, p.error = "queued", ""
+        requeue = job.status not in ("queued", "running")
+        if requeue:
+            job.cancel = threading.Event()
+            job.status, job.error = "queued", ""
+            job.samples.clear()
+    job.log(f"恢复 P{p.page}" + ("，重新加入队列" if requeue else ""))
+    if requeue:
+        QUEUE.put(job)
     return {"ok": True}
 
 
@@ -547,7 +624,8 @@ def api_cookie(body):
 
 GET_ROUTES = {"/api/status": api_status, "/api/jobs": api_jobs}
 POST_ROUTES = {"/api/info": api_info, "/api/download": api_download, "/api/cancel": api_cancel,
-               "/api/retry": api_retry, "/api/remove": api_remove, "/api/pick_folder": api_pick_folder,
+               "/api/retry": api_retry, "/api/skip": api_skip, "/api/unskip": api_unskip,
+               "/api/remove": api_remove, "/api/pick_folder": api_pick_folder,
                "/api/open": api_open, "/api/cookie": api_cookie}
 
 CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "

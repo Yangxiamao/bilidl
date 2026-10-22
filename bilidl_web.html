@@ -86,7 +86,9 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
 .jstats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
 .jbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .jpages { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
-.jp { display: grid; grid-template-columns: minmax(0, 1fr) 140px 120px; gap: 10px; align-items: center; padding: 3px 0; font-size: 13px; }
+.jp { display: grid; grid-template-columns: minmax(0, 1fr) 140px 120px auto; gap: 10px; align-items: center; padding: 3px 0; font-size: 13px; }
+.jp button { min-width: 52px; }
+.jp.skipped .n { color: var(--muted); text-decoration: line-through; }
 .jp .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jp .s { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .jp .e { grid-column: 1 / -1; color: var(--err); font-size: 12px; word-break: break-all; }
@@ -96,8 +98,9 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
 #toast.bad { background: var(--err); color: #fff; }
 [hidden] { display: none !important; }
 @media (max-width: 560px) {
-  .jp { grid-template-columns: minmax(0, 1fr) 90px; }
-  .jp .s { grid-column: 1 / -1; }
+  .jp { grid-template-columns: minmax(0, 1fr) 90px auto; }
+  .jp .s { grid-column: 1 / -1; order: 1; }
+  .jp .e { order: 2; }
   .prow .pd { display: none; }
 }
 </style>
@@ -166,7 +169,7 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
 
   <section class="card">
     <h2>任务</h2>
-    <p id="noJobs" class="hint">还没有任务。一次只下载一个任务，任务内逐个分P下载。</p>
+    <p id="noJobs" class="hint">还没有任务。一次只下载一个任务，任务内逐个分P下载；下载中可以点「展开分P」跳过不想要的分P。</p>
     <div id="jobs"></div>
   </section>
 </main>
@@ -403,7 +406,7 @@ $("start").onclick = async () => {
 
 // ---------- 任务列表（按 id 原地更新，不整块重绘） ----------
 const JOB_TEXT = { queued: "排队中", running: "下载中", done: "完成", partial: "部分失败", failed: "失败", cancelled: "已取消" };
-const PAGE_TEXT = { queued: "排队", done: "完成", exists: "已存在", failed: "失败", cancelled: "已取消" };
+const PAGE_TEXT = { queued: "排队", done: "完成", exists: "已存在", failed: "失败", cancelled: "已取消", skipped: "已跳过" };
 const views = new Map();
 
 function makeJob(j) {
@@ -431,7 +434,10 @@ function makeJob(j) {
     pv.n = el("span", "n", `P${p.page}  ${p.part}`); pv.n.title = p.part;
     pv.bar = el("div", "bar"); pv.fill = el("div"); pv.bar.append(pv.fill);
     pv.s = el("span", "s"); pv.e = el("div", "e"); pv.e.hidden = true;
-    pv.root.append(pv.n, pv.bar, pv.s, pv.e);
+    pv.btn = el("button", "small");
+    const page = p.page;
+    pv.btn.onclick = () => act(pv.state === "skipped" ? "/api/unskip" : "/api/skip", j.id, { page });
+    pv.root.append(pv.n, pv.bar, pv.s, pv.btn, pv.e);
     v.plist.append(pv.root); v.pages.push(pv);
   }
   v.root.append(head, v.sub, v.bar, v.stats, v.log, btns, v.plist);
@@ -444,12 +450,12 @@ function makeJob(j) {
   if (j.pages.length === 1) v.toggle.hidden = true;
   return v;
 }
-async function act(path, id) {
-  try { await api(path, { id }); poll(); } catch (e) { toast(e.message, true); }
+async function act(path, id, extra) {
+  try { await api(path, { id, ...extra }); poll(); } catch (e) { toast(e.message, true); }
 }
 function setText(node, t) { if (node.textContent !== t) node.textContent = t; }
 function barClass(state) {
-  return "bar" + ({ done: " done", exists: " done", failed: " bad", partial: " bad", cancelled: " stop" }[state] || "");
+  return "bar" + ({ done: " done", exists: " done", failed: " bad", partial: " bad", cancelled: " stop", skipped: " stop" }[state] || "");
 }
 
 function updateJob(v, j) {
@@ -462,7 +468,9 @@ function updateJob(v, j) {
   setText(v.sub, `${what} · ${j.folder}`); v.sub.title = j.folder;
   // 只下字幕的任务没有可估的大小，进度按完成的分P数算
   const fin = j.pages.filter(p => p.state === "done" || p.state === "exists").length;
-  const pct = j.sub_only ? fin / j.pages.length * 100 : j.total ? Math.min(100, j.done / j.total * 100) : 0;
+  const skipped = j.pages.filter(p => p.state === "skipped").length;
+  const want = j.pages.length - skipped;  // 跳过的分P不算进进度
+  const pct = j.sub_only ? (want ? fin / want * 100 : 0) : j.total ? Math.min(100, j.done / j.total * 100) : 0;
   v.fill.style.width = pct.toFixed(1) + "%";
   v.bar.className = barClass(j.status);
   setText(v.pct, pct.toFixed(1) + "%");
@@ -470,7 +478,7 @@ function updateJob(v, j) {
   const live = j.status === "running" && !j.sub_only;
   setText(v.speed, live ? `速度 ${(j.speed / 1e6).toFixed(2)} MB/s` : "");
   setText(v.eta, live ? `剩余 ${fmtEta(j.eta)}` : "");
-  setText(v.cnt, `分P ${fin}/${j.pages.length}`);
+  setText(v.cnt, `分P ${fin}/${want}` + (skipped ? `（跳过 ${skipped}）` : ""));
   setText(v.subs, [subSummary(j), dmSummary(j)].filter(Boolean).join(" · "));
   v.subs.title = j.pages.flatMap(p => [p.sub_msg, p.dm_msg]).filter(Boolean).join("\n");
   setText(v.node, j.status === "running" && j.node ? "节点 " + j.node.replace(/\.bilivideo\.com$|\.akamaized\.net$/, "") : "");
@@ -484,8 +492,16 @@ function updateJob(v, j) {
     const pp = p.total ? Math.min(100, p.done / p.total * 100) : 0;
     pv.fill.style.width = (p.state === "done" || p.state === "exists" ? 100 : pp).toFixed(1) + "%";
     pv.bar.className = barClass(p.state);
-    let s = p.state === "running" ? (p.stage || "下载中") : PAGE_TEXT[p.state] || p.state;
-    if (p.state === "running" || ((p.state === "cancelled" || p.state === "failed") && p.done))
+    pv.root.className = "jp " + p.state;
+    // 排队和下载中的分P可以跳过，跳过的可以恢复（任务已结束时会重新排队，只下这一P）
+    pv.state = p.state;
+    const canSkip = p.state === "queued" || p.state === "running";
+    pv.btn.style.visibility = canSkip || p.state === "skipped" ? "" : "hidden";
+    setText(pv.btn, p.cancelling ? "跳过中…" : p.state === "skipped" ? "恢复" : "跳过");
+    pv.btn.title = p.state === "skipped" ? "重新下载这一P" + (p.done ? "（接着上次的进度）" : "") : "不下载这一P";
+    pv.btn.disabled = p.cancelling || (canSkip && j.cancelling);
+    let s = p.state === "running" ? (p.cancelling ? "正在跳过…" : p.stage || "下载中") : PAGE_TEXT[p.state] || p.state;
+    if (p.state === "running" || (["cancelled", "failed", "skipped"].includes(p.state) && p.done))
       s += ` ${pp.toFixed(0)}% · ${fmtBytes(p.done)}/${fmtBytes(p.total)}`;
     else if (j.sub_only && p.state === "done") s += [j.subs !== "off" && (p.subs.length ? p.subs.join(", ") : "无字幕"),
                                                      j.danmaku && p.dm_msg].filter(Boolean).map(x => " · " + x).join("");
