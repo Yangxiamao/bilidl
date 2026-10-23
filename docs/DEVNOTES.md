@@ -64,6 +64,10 @@
   - `POST /api/download`：`subs` 是 `off` / `auto` / `all`，`sub_only` 为真时只下字幕
   - `POST /api/cancel`、`/api/retry`、`/api/remove`、`/api/pick_folder`、`/api/open`、`/api/cookie`
   - `POST /api/skip`、`/api/unskip`：参数 `{id, page}`，跳过/恢复任务里的一个分P
+  - `GET /api/token`：给 Chrome 插件取 token，不需要 `X-Token`。校验 Host；带 `Origin` 但不是 `chrome-extension://` 时 403
+  - `POST /api/sync_cookie`：参数 `{sessdata}`，和当前的相同时返回 `{changed: false}`（不联网、不清解析缓存），不同时走 `/api/cookie` 的逻辑
+  - `GET /api/status` 返回 `qn`：上次下载视频用的清晰度（只下字幕时不记），网页和插件都默认选它
+- **网页预填**：`/?url=<链接>` 会自动填进输入框并解析，然后用 `history.replaceState` 把地址改回 `/`，刷新时不重复解析。插件的「更多选项」用的就是这个。
 - **任务队列**：只有一个工作线程，一次只下一个任务，任务内逐个分P下载。同一个文件已经在未结束的任务里时，拒绝重复提交。
 - **跳过分P**：
   - 每个分P有自己的 `cancel` 事件，传给 `download_page`；取消整个任务时也会设置正在下载的那个分P的事件。打断后，`job.cancel` 被设置了就记为 `cancelled`（「重试」会重下），没设置就记为 `skipped`（「重试」不管，只能单独恢复）。
@@ -76,6 +80,18 @@
   - 剩余时间 = 剩余字节 ÷ 速度。
   - 前端每秒轮询一次，按任务 id 原地更新 DOM，不整块重绘，否则按钮会点不到。
 - **后台运行**：`install-autostart.ps1` 在「启动」文件夹里创建快捷方式，用 `pythonw ... --no-browser` 运行。token 在每次打开页面时注入，所以书签不会失效。改了 `bilidl_web.html` 只需刷新页面；改了 .py 文件则需要重新运行 `install-autostart.ps1`，它会先停掉旧服务再启动。
+
+## Chrome 插件（chrome-extension/）
+
+MV3，开发者模式加载。只做界面，解析和下载都交给本地服务。
+
+- **请求必须走后台**：内容脚本运行在 bilibili.com 的源下，直接请求 `127.0.0.1` 会被 CORS 和 Chrome 的私有网络访问（PNA）限制拦掉。所以内容脚本通过 `chrome.runtime.sendMessage` 让 `background.js` 去请求；后台有 `host_permissions`，不受 CORS 限制。
+- **token**：后台用 `/api/token` 取并缓存；服务重启后 token 会变，收到「token 无效」的 403 时清掉缓存重取一次。fetch 失败就认为服务没运行。
+- **登录同步**：`chrome.cookies` 能读到 HttpOnly 的 `SESSDATA`。每次点开面板都调一次 `/api/sync_cookie`，值没变时服务端直接返回，开销很小。
+- **按钮位置**：固定在页面右下角，不插进 B 站工具栏，因为 B 站改版时 DOM 选择器容易失效。按钮和面板放在 closed Shadow DOM 里，不受 B 站样式影响。
+- **单页跳转**：B 站切换分P、点推荐视频时不刷新页面，所以视频链接要在点击按钮时读 `location.href`，不能在脚本加载时读。
+- **面板状态**：每次打开面板 `session` 加一，旧的请求结果和进度轮询发现 `session` 变了就作废，避免关掉再打开时内容串在一起。
+- **测试**：`tests/web_ext_test.py` 测服务端接口；面板本身只能在浏览器里手动测。
 
 ## 设计取舍
 

@@ -183,6 +183,7 @@ let info = null;            // 当前解析结果
 let ffmpegOk = true;
 let dmOk = false, dmWhy = "";
 let MAX_THREADS = 32;
+let lastQn = 64;            // 上次下载用的清晰度，解析后默认选它
 
 // ---------- 工具 ----------
 async function api(path, body) {
@@ -273,10 +274,10 @@ function renderInfo() {
   const total = info.pages.reduce((a, p) => a + p.dur, 0);
   $("vcount").textContent = `${info.pages.length} 个分P · 总时长 ${fmtDur(total)}`;
 
-  // 清晰度：默认 720P，不可用则取不超过 720P 的最高清晰度
+  // 清晰度：默认上次用的（第一次是 720P），不可用则取不超过它的最高清晰度
   const qs = info.qualities;
   const avail = qs.map(q => q.qn);
-  const def = Math.max(...avail.filter(x => x <= 64), Math.min(...avail));
+  const def = Math.max(...avail.filter(x => x <= lastQn), Math.min(...avail));
   const box = $("quals"); box.textContent = "";
   for (const q of qs) {
     const lab = el("label", "qual");
@@ -565,6 +566,7 @@ async function poll() {
     ffmpegOk = s.ffmpeg;
     if (!$("dir").value) $("dir").value = s.default_dir;
     MAX_THREADS = s.max_threads; $("threads").max = s.max_threads; $("threads").value = s.threads;
+    lastQn = s.qn || 64;
     $("subMode").value = s.subs;
     dmOk = s.danmaku_ok; dmWhy = s.danmaku_why || "";
     $("dmOn").checked = dmOk && s.danmaku; $("dmOn").disabled = !dmOk;
@@ -574,6 +576,13 @@ async function poll() {
   poll();
   setInterval(poll, 1000);
   $("url").focus();
+  // Chrome 插件的「更多选项」会打开 /?url=<视频链接>：自动填好并解析，再把地址栏改回 /，刷新时不重复解析
+  const pre = new URLSearchParams(location.search).get("url");
+  if (pre) {
+    history.replaceState(null, "", "/");
+    $("url").value = pre;
+    parse();
+  }
 })();
 </script>
 </body>

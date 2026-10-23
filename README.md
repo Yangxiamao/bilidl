@@ -95,7 +95,21 @@ python bilidl_web.py --no-browser # 只启动服务
 - 多P任务开始后，点「展开分P」可以单独「跳过」不想要的分P，排队中和正在下载的都可以跳过。跳过正在下载的分P时，已下的部分会保留；点「恢复」会接着下，任务已经结束的话会重新排队，只下这一P。「重试」不会重新下载跳过的分P。
 - 「浏览…」按钮会弹出 Windows 原生的选择文件夹对话框（使用 tkinter）。
 - 解析后会列出可用的字幕（人工 / AI 识别 / AI 翻译），可以选择是否一起下载字幕和弹幕，或者只下字幕/弹幕。没装 biliass 时，弹幕选项是灰的，旁边会提示怎么安装。
-- 上次用的保存目录、线程数、字幕和弹幕选项会记在 `config.json` 里；第一次使用时默认保存到用户的「下载」文件夹。
+- 上次用的保存目录、清晰度、线程数、字幕和弹幕选项会记在 `config.json` 里；第一次使用时默认保存到用户的「下载」文件夹，清晰度默认 720P。
+
+### Chrome 插件：在 B 站视频页一键下载
+
+装上 `chrome-extension/` 里的插件后，B 站视频页右下角会多一个「⬇ 下载」按钮：点开会列出各清晰度和预计大小，点一个就开始下载（多P视频下载全部分P），面板里能看到进度。想选分P、换目录或改字幕选项时，点「更多选项」会打开 bilidl 网页，链接已经填好并自动解析。
+
+1. 打开 `chrome://extensions`，打开右上角的「开发者模式」。
+2. 点「加载已解压的扩展程序」，选择本仓库的 `chrome-extension` 文件夹。
+3. 打开任意 B 站视频页（已经打开的页面要刷新一下）。
+
+注意：
+- 下载仍然由 bilidl-web 完成，所以服务要在运行（用「一键启动」，或者设成开机自启，见下一节）。没运行时面板会提示。
+- 保存目录、线程数、字幕和弹幕选项沿用网页界面上次的设置；默认选中上次用的清晰度。
+- 插件会读取 Chrome 里 bilibili.com 的 `SESSDATA` cookie，和 bilidl 保存的不一样时自动更新 `sessdata.txt`，以后不用再按 F12 手动复制。Chrome 里没登录时不会改动 bilidl 的 cookie。
+- 更新 bilidl 后如果插件文件有变化，到 `chrome://extensions` 点插件上的刷新按钮，再刷新 B 站页面。
 
 ### 开机自动在后台运行
 
@@ -111,6 +125,7 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 浏览器里的任何网页都能向 `127.0.0.1` 发请求，所以本地接口做了这些防护：
 
 - 每次启动随机生成一个 token，只嵌在本服务返回的页面里。所有 `/api/*` 请求都必须带上 `X-Token` 请求头，服务端也不返回任何 CORS 头。
+- Chrome 插件通过 `/api/token` 取 token：没有 CORS 头，普通网页读不到响应；带了 `Origin` 头但不是 `chrome-extension://` 的请求直接拒绝。
 - 校验 `Host` 请求头，防止 DNS rebinding 攻击读取页面里的 token。
 - 「打开文件夹」接口只能打开任务的保存目录，或用户自己选过的目录。
 - 不记录请求内容，cookie 不会出现在日志或接口返回里。
@@ -136,6 +151,7 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 | `bilidl.cmd` / `bilidl-web.cmd` | Windows 命令行启动器 |
 | `一键启动.bat` / `launch.ps1` | 双击启动：检查并可自动安装 Python 和 ffmpeg，然后启动网页界面 |
 | `install-autostart.ps1` | 安装或取消开机自启 |
+| `chrome-extension/` | Chrome 插件：在 B 站视频页加「下载」按钮，交给本地服务下载 |
 | `docs/DEVNOTES.md` | 开发笔记：踩过的坑、核心 API、网页界面设计 |
 | `docs/SPEEDUP.md` | 提速方案和测量数据 |
 | `docs/SUBTITLES.md` | 字幕接口的实测情况，以及 B 站不提供字幕时的替代方案 |

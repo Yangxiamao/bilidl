@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "bilidl 一键下载",
+  "version": "1.0.0",
+  "description": "在 B 站视频页加一个下载按钮，交给本机运行的 bilidl-web 下载。",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "permissions": ["cookies"],
+  "host_permissions": ["http://127.0.0.1:8765/*", "https://*.bilibili.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["https://www.bilibili.com/video/*", "https://www.bilibili.com/list/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}

@@ -90,6 +90,11 @@ def default_threads():
     return t if isinstance(t, int) and 1 <= t <= bilidl.MAX_WORKERS else bilidl.WORKERS
 
 
+def default_qn():
+    q = load_config().get("qn")
+    return q if q in bilidl.QN_NAME else 64
+
+
 _api = None
 _api_lock = threading.Lock()
 
@@ -330,7 +335,7 @@ def sampler():
 
 def api_status(_):
     out = {"default_dir": default_dir(), "threads": default_threads(), "max_threads": bilidl.MAX_WORKERS,
-           "subs": default_subs(), "danmaku": default_danmaku(),
+           "qn": default_qn(), "subs": default_subs(), "danmaku": default_danmaku(),
            "danmaku_ok": bilidl.danmaku_available()[0], "danmaku_why": bilidl.danmaku_available()[1],
            "ffmpeg": bool(FFMPEG), "login": None, "vip": False, "uname": ""}
     try:
@@ -438,7 +443,7 @@ def api_download(body):
         job = Job(bvid, info["title"], folder, qn, tasks, workers, subs, sub_only, danmaku)
         JOBS[job.id] = job
     dm_cfg = {"danmaku": danmaku} if bilidl.danmaku_available()[0] else {}  # 没装 biliass 时别把「关」记下来
-    save_config(last_dir=out_dir, threads=workers, subs=subs, **dm_cfg)
+    save_config(last_dir=out_dir, threads=workers, subs=subs, **dm_cfg, **({} if sub_only else {"qn": qn}))
     extras = ("" if subs == "off" else "  含字幕") + ("  含弹幕" if danmaku else "")
     what = ("只下字幕/弹幕" + extras) if sub_only else f"{bilidl.QN_NAME[qn]}  {workers} 线程" + extras
     job.log(f"加入队列：{info['title']}  {len(tasks)} 个分P  {what}  -> {folder}")
@@ -622,11 +627,23 @@ def api_cookie(body):
         raise UserError(f"已保存，但检查登录状态失败：{friendly(e)}", 502)
 
 
+def api_sync_cookie(body):
+    """Chrome 插件每次解析前把浏览器里的 SESSDATA 发过来；没变就什么都不做，变了才保存。"""
+    sess = str(body.get("sessdata") or "").strip()
+    if not sess:
+        raise UserError("SESSDATA 为空")
+    if hmac.compare_digest(sess.encode(), (get_api().sess or "").encode()):
+        return {"changed": False}
+    out = api_cookie({"sessdata": sess})
+    bilidl.log("已从 Chrome 插件同步登录 cookie")
+    return {"changed": True, **out}
+
+
 GET_ROUTES = {"/api/status": api_status, "/api/jobs": api_jobs}
 POST_ROUTES = {"/api/info": api_info, "/api/download": api_download, "/api/cancel": api_cancel,
                "/api/retry": api_retry, "/api/skip": api_skip, "/api/unskip": api_unskip,
                "/api/remove": api_remove, "/api/pick_folder": api_pick_folder,
-               "/api/open": api_open, "/api/cookie": api_cookie}
+               "/api/open": api_open, "/api/cookie": api_cookie, "/api/sync_cookie": api_sync_cookie}
 
 CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "
        "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -677,6 +694,13 @@ class Handler(BaseHTTPRequestHandler):
             with open(PAGE_FILE, encoding="utf-8") as f:
                 html = f.read().replace("__TOKEN__", TOKEN)
             self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/api/token":
+            # 给 Chrome 插件取 token。普通网页跨域读不到响应（没有 CORS 头），这里再按 Origin 挡一层
+            origin = self.headers.get("Origin")
+            if origin and not origin.startswith("chrome-extension://"):
+                self._send(403, {"error": "Origin 不允许"})
+            elif self._allowed(False):
+                self._send(200, {"token": TOKEN})
         elif path in GET_ROUTES:
             if self._allowed(True):
                 self._call(GET_ROUTES[path], {})
