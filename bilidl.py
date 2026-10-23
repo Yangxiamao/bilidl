@@ -117,12 +117,17 @@ def resolve_target(s):
 
 def video_meta(api, bvid):
     """返回 (title, owner, [(page, part, cid, duration)])。"""
-    # 带登录 cookie 请求 view 接口容易触发 412 风控，所以用游客身份；仍失败则退回 pagelist 接口
-    try:
-        v = api.get(f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}", login=False)["data"]
-        return v["title"], v["owner"]["name"], [(p["page"], p["part"], p["cid"], p["duration"]) for p in v["pages"]]
-    except Exception as e:
-        log("view 接口失败，改用 pagelist:", e)
+    # 带登录 cookie 请求 view 接口容易触发 412 风控，所以用游客身份；不带签名的 view 也会 412，
+    # 这时换带 WBI 签名的 wbi/view；都失败才退回 pagelist 接口
+    for name, url in (("view", lambda: f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"),
+                      ("wbi/view", lambda: "https://api.bilibili.com/x/web-interface/wbi/view?"
+                                           + api.wbi_query({"bvid": bvid}))):
+        try:
+            v = api.get(url(), login=False)["data"]
+            return v["title"], v["owner"]["name"], [(p["page"], p["part"], p["cid"], p["duration"]) for p in v["pages"]]
+        except Exception as e:
+            log(f"{name} 接口失败:", e)
+    log("改用 pagelist 接口")
     ps = api.get(f"https://api.bilibili.com/x/player/pagelist?bvid={bvid}", login=False)["data"]
     title, owner = bvid, ""
     try:  # 标题从网页 <title> 里取（主站连不上时就用 BV 号）
