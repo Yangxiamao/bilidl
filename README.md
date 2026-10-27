@@ -85,7 +85,7 @@ B 站自己的播放器，锁定 4K（2880x2160），同一网络、同一视频
 
 ## 一键启动（不用命令行）
 
-1. 在本页点击绿色的 **Code** 按钮 → **Download ZIP**，然后解压到任意文件夹。
+1. 到 [Releases](https://github.com/Yangxiamao/bilidl/releases/latest) 下载最新版的 **bilidl-vX.Y.Z.zip**，解压到任意文件夹。（也可以点本页绿色的 **Code** 按钮 → **Download ZIP**，那是开发中的最新代码。）
 2. 双击里面的 **`一键启动.bat`**。
 3. 浏览器会自动打开下载页面：粘贴视频链接 → 解析 → 选择清晰度和保存位置 → 开始下载。
 
