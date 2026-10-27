@@ -42,6 +42,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .bar.done > div { background: var(--ok); }
 .bar.bad > div { background: var(--err); }
 .ok { color: var(--ok); }
+.accel { display: flex; gap: 8px; align-items: baseline; margin-top: 6px; padding: 5px 8px; border-radius: 6px;
+  background: var(--track); font-size: 12px; color: var(--muted); }
+.accel.on { background: var(--soft); color: var(--text); }
+.accel.warn { color: var(--err); }
+.accel span { flex: 1; word-break: break-all; }
 `;
 
   const host = document.createElement("div");
@@ -83,16 +88,64 @@ button { font: inherit; color: inherit; cursor: pointer; }
   function close() {
     session++;
     clearTimeout(pollTimer);
+    clearTimeout(accelTimer);
     panel.hidden = true;
   }
 
-  // 面板顶部：标题 + 关闭按钮
+  // 面板顶部：标题 + 关闭按钮，下面是播放加速的状态行
   function frame(title) {
     panel.textContent = "";
     const top = el("div", "top");
     const x = el("button", "x", "✕"); x.title = "关闭"; x.onclick = close;
     top.append(el("div", "title", title), x);
-    panel.append(top);
+    panel.append(top, accel);
+  }
+
+  // ---------- 播放加速状态（play.js 负责开关重定向，这里只显示） ----------
+  const accel = el("div", "accel");
+  let accelTimer = null;
+  const WHY = {
+    "off": "播放加速已关闭",
+    "checking": "播放加速：正在连接 bilidl…",
+    "lna-prompt": "播放加速：请在地址栏下方的提示里点「允许」（允许 B 站访问本机的 bilidl）",
+    "lna-denied": "播放加速被 Chrome 拦截：点地址栏左侧的网站设置图标，把「本地网络访问」改为允许，再刷新页面",
+    "not-running": "播放加速未生效：bilidl 没有运行，现在是直连播放",
+    "proxy-failed": "播放加速暂停：bilidl 出错或已退出，已改回直连，稍后自动重试",
+  };
+
+  function renderAccel(s) {
+    accel.textContent = "";
+    if (!s) { accel.className = "accel"; accel.append(el("span", "", "播放加速：状态未知")); return; }
+    const text = el("span");
+    if (s.on) {
+      const now = (s.stats && s.stats.resources || []).find(r => r.kind === "video" && r.idle < 30);
+      const parts = ["⚡ 播放加速中"];
+      if (now) {
+        parts.push(now.ahead_sec != null ? `预读领先 ${Math.round(now.ahead_sec)} 秒` : `已预读 ${fmtBytes(now.ahead)}`);
+        if (now.host) parts.push("节点 " + now.host.replace(/^upos-(sz-|hz-)?(mirror)?/, "").replace(/\..*$/, ""));
+        parts.push(`${(now.speed / 1e6).toFixed(1)} MB/s`);
+      }
+      text.textContent = parts.join(" · ");
+    } else {
+      text.textContent = WHY[s.why] || WHY.checking;
+      if (s.why === "proxy-failed" && s.detail)
+        text.textContent += `（${Math.round((Date.now() - s.at) / 1000)} 秒前：${s.detail}）`;
+    }
+    accel.className = "accel" + (s.on ? " on" : ["lna-denied", "lna-prompt", "not-running"].includes(s.why) ? " warn" : "");
+    const toggle = el("button", "link", s.pref ? "关闭" : "开启");
+    toggle.title = s.pref ? "关闭后播放器直连 B 站，不经过 bilidl" : "让 bilidl 多线程预读视频，倍速也不卡";
+    toggle.onclick = async () => { await chrome.storage.local.set({ playAccel: !s.pref }); setTimeout(refreshAccel, 500); };
+    accel.append(text, toggle);
+  }
+
+  async function refreshAccel() {
+    clearTimeout(accelTimer);
+    if (panel.hidden) return;
+    let s = null;
+    try { s = await send("playStatus"); } catch (e) { /* 插件重新加载过 */ }
+    if (panel.hidden) return;
+    renderAccel(s);
+    accelTimer = setTimeout(refreshAccel, 2000);
   }
 
   function showError(title, msg, url) {
@@ -111,6 +164,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
     const url = location.href;  // B 站切换分P/推荐视频是单页跳转，要在点击时读
     panel.hidden = false;
     frame("bilidl");
+    refreshAccel();
     panel.append(el("div", "muted", "解析中…（会抽样几个分P测码率，需要几秒）"));
     let res;
     try { res = await send("prepare", { url }); }

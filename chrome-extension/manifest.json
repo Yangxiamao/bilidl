@@ -1,15 +1,22 @@
 {
   "manifest_version": 3,
   "name": "bilidl 一键下载",
-  "version": "1.0.0",
-  "description": "在 B 站视频页加一个下载按钮，交给本机运行的 bilidl-web 下载。",
+  "version": "1.1.0",
+  "description": "在 B 站视频页加一个下载按钮，交给本机运行的 bilidl-web 下载；在线播放时由 bilidl-web 多线程预读，倍速也不卡。",
   "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "permissions": ["cookies"],
-  "host_permissions": ["http://127.0.0.1:8765/*", "https://*.bilibili.com/*"],
+  "permissions": ["cookies", "declarativeNetRequest", "storage", "webRequest"],
+  "host_permissions": ["http://127.0.0.1:8765/*", "https://*.bilibili.com/*", "https://*.bilivideo.com/*",
+                       "https://*.akamaized.net/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [{
-    "matches": ["https://www.bilibili.com/video/*", "https://www.bilibili.com/list/*"],
+    "matches": ["https://www.bilibili.com/video/*", "https://www.bilibili.com/list/*",
+                "https://www.bilibili.com/*/video/*", "https://www.bilibili.com/*/list/*"],
     "js": ["content.js"],
     "run_at": "document_idle"
+  }, {
+    "matches": ["https://www.bilibili.com/video/*", "https://www.bilibili.com/list/*", "https://www.bilibili.com/bangumi/play/*",
+                "https://www.bilibili.com/*/video/*", "https://www.bilibili.com/*/list/*", "https://www.bilibili.com/*/bangumi/play/*"],
+    "js": ["play.js"],
+    "run_at": "document_start"
   }]
 }

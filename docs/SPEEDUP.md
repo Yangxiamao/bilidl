@@ -92,6 +92,8 @@ def mirrors(s, hosts=FAST_HOSTS):
 4. **坏节点**：在 `FAST_HOSTS` 最前面临时加一个不存在的域名，确认下载不会明显变慢，并且这个节点会被降权（做了第 4 或第 5 项才测这一条）。
 5. 测完把临时文件删掉，测试输出要放在临时目录里。
 
+> **2026-10-27 复测**：`upos-sz-mirror08c` 已经解析不到，`mirrorali` 降到 8 线程约 1.5 MB/s；目前较快的是 `mirror08ct`、`mirrorhwb`、`mirrorhw`、`mirroralib`、`mirroraliov`（8 线程 6~11 MB/s），`FAST_HOSTS` 已按此更新。同一节点前后几分钟能差好几倍，所以在线播放改成了按运行时实测速度挑节点（也就是上面第 5 项的思路）。另外 akamai 的链接换域名现在也有效。数据见 [PLAYBACK.md](PLAYBACK.md)。
+
 ## 实施结果（2026-10-14）
 ### 已做
 - **第 1 项 换节点**：按方案改写了 `mirrors(s, hosts=None)`。只对 `upos-*.bilivideo.com` 的链接换域名，并去掉了按 akamai 排序的逻辑。`download_page(..., hosts=)` 可以指定节点列表。

@@ -11,6 +11,8 @@
 | `web_skip_test.py <输出目录> [端口]` | 需要先启动服务。用 1 个线程下一个 2P 视频，测跳过排队中/下载中的分P、任务进行中和结束后恢复（续传）、全部跳过、和取消整个任务的区别 | 约 30 MB |
 | `web_ext_test.py <输出目录> [端口]` | 需要先启动服务。测 Chrome 插件用到的接口：`/api/token` 的 Origin/Host 校验、`/api/sync_cookie`（不会改动真实 cookie）、记住清晰度、`/?url=` 预填。测完会恢复 `config.json` | 不到 1 MB（下载开始后立刻取消） |
 | `web_threads_test.py <输出目录>` | 需要先启动服务。测线程数设置的校验和当前节点显示 | 约 75 MB |
+| `play_test.py [端口] [BV号]` | 需要先启动服务。在线播放代理 `/play/`：经代理和直连取同样的 Range 逐字节比较（跨块、不对齐、文件末尾、超出范围）、只给 akamai 链接时换快节点、同一块并发请求只拉一次、CORS 和目标链接校验、`/api/play_stats` | 约 100 MB（含预读） |
+| `play_bench.py [端口] [BV号] [direct\|proxy\|both]` | 需要先启动服务。按码率 × 倍速模拟网页播放器取数（1x → 2x → 跳到 60% → 3x），比较直连 API 给的节点和经代理的卡顿次数、起播时间、请求耗时。默认视频是一个约 2.5 小时的 4K 演唱会 | 直连约 100 MB，代理约 1 GB |
 | `sub_test.py <输出目录>` | 字幕选择规则和 SRT 格式（离线）、字幕列表多次请求是否一致、下载和跳过已存在、未登录时的提示。第 2、3 步需要登录 | 不到 1 MB |
 | `danmaku_test.py <输出目录>` | 多个 protobuf 分段一起转 ASS（离线）、联网下载和跳过已存在、没装 biliass 时的提示。需要先 `python -m pip install biliass` | 约 1 MB |
 

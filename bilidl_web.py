@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOME = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HOME)  # python -I 不会把脚本目录加入 sys.path
 import bilidl
+import bilidl_play
 
 PORT = 8765
 HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -42,6 +43,7 @@ PICKED = set()      # 用户通过对话框选过的目录，允许 /api/open
 QUEUE = queue.Queue()
 PICK_LOCK = threading.Lock()
 SUB_MODES = ("off",) + bilidl.SUB_MODES
+PLAYER = None       # bilidl_play.Cache，在 main() 里创建
 
 
 class UserError(Exception):
@@ -639,7 +641,13 @@ def api_sync_cookie(body):
     return {"changed": True, **out}
 
 
-GET_ROUTES = {"/api/status": api_status, "/api/jobs": api_jobs}
+def api_play_stats(_):
+    if PLAYER is None:
+        raise UserError("播放加速没有启动", 503)
+    return PLAYER.stats()
+
+
+GET_ROUTES = {"/api/status": api_status, "/api/jobs": api_jobs, "/api/play_stats": api_play_stats}
 POST_ROUTES = {"/api/info": api_info, "/api/download": api_download, "/api/cancel": api_cancel,
                "/api/retry": api_retry, "/api/skip": api_skip, "/api/unskip": api_unskip,
                "/api/remove": api_remove, "/api/pick_folder": api_pick_folder,
@@ -704,8 +712,91 @@ class Handler(BaseHTTPRequestHandler):
         elif path in GET_ROUTES:
             if self._allowed(True):
                 self._call(GET_ROUTES[path], {})
+        elif path.startswith("/play/"):
+            if self._allowed(False):
+                self._play()
         else:
             self._send(404, {"error": "not found"})
+
+    def _play_cors(self):
+        """在线播放的 CORS 头。只给 B 站页面（以及跨源重定向后变成 null 的 Origin）读响应。"""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return {}
+        if not bilidl_play.ORIGIN_OK.match(origin):
+            return None
+        return {"Access-Control-Allow-Origin": origin, "Access-Control-Expose-Headers": "Content-Range, Content-Length",
+                "Vary": "Origin"}
+
+    def do_OPTIONS(self):
+        if not urllib.parse.urlsplit(self.path).path.startswith("/play/"):
+            self._send(404, {"error": "not found"})
+            return
+        cors = self._play_cors()
+        if not cors:
+            self._send(403, {"error": "Origin 不允许"})
+            return
+        if not self._allowed(False):
+            return
+        self.send_response(204)
+        for k, v in {**cors, "Access-Control-Allow-Methods": "GET", "Access-Control-Allow-Headers": "Range",
+                     "Access-Control-Allow-Private-Network": "true", "Access-Control-Max-Age": "600",
+                     "Content-Length": "0"}.items():
+            self.send_header(k, v)
+        self.end_headers()
+
+    def _play(self):
+        """/play/ping：扩展用来确认页面能访问本机服务；/play/<原始 m4s 链接>：经缓存转发。"""
+        cors = self._play_cors()
+        if cors is None:
+            self._send(403, {"error": "Origin 不允许"})
+            return
+        target = self.path[len("/play/"):]
+        try:
+            if PLAYER is None:
+                raise bilidl_play.PlayError(503, "播放加速没有启动")
+            if target == "ping":
+                self.send_response(204)
+                for k, v in {**cors, "Cache-Control": "no-store", "Content-Length": "0"}.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                return
+            start, end, size, body = PLAYER.open(target, self.headers.get("Range"))
+        except bilidl_play.PlayError as e:
+            if e.code >= 500:
+                bilidl.log(f"在线播放出错（HTTP {e.code}）:", e)
+            self._send_play_error(e.code, str(e), cors)
+            return
+        except Exception as e:
+            bilidl.log("在线播放出错:", friendly(e))
+            self._send_play_error(502, friendly(e), cors)
+            return
+        partial = self.headers.get("Range") is not None
+        self.send_response(206 if partial else 200)
+        hdrs = {**cors, "Content-Type": "video/mp4", "Content-Length": str(end - start + 1), "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store"}
+        if partial:
+            hdrs["Content-Range"] = f"bytes {start}-{end}/{size}"
+        for k, v in hdrs.items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            for piece in body:
+                self.wfile.write(piece)
+        except (ConnectionError, OSError):
+            pass  # 播放器取消了请求（比如跳转）
+        except bilidl_play.PlayError as e:  # 响应头已经发出，只能断开连接，播放器会重试
+            bilidl.log("在线播放中途出错:", e)
+            self.close_connection = True
+
+    def _send_play_error(self, code, msg, cors):
+        data = json.dumps({"error": msg}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        for k, v in {**cors, "Content-Type": "application/json; charset=utf-8", "Content-Length": str(len(data)),
+                     "Cache-Control": "no-store"}.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
@@ -736,6 +827,12 @@ class Server(ThreadingHTTPServer):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
 
+    def handle_error(self, request, client_address):
+        # 浏览器丢弃预先建好的连接、播放器取消请求时，对方会直接断开，不是错误，不往日志里打堆栈
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def main():
     background = sys.stdout is None
@@ -757,6 +854,8 @@ def main():
         return
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=sampler, daemon=True).start()
+    global PLAYER
+    PLAYER = bilidl_play.Cache(workers=default_threads())
     bilidl.log(f"bilidl-web 已启动：{url}  " + ("（后台运行，无窗口）" if background else "（关闭此窗口或按 Ctrl+C 停止）"))
     if not FFMPEG:
         bilidl.log("警告：找不到 ffmpeg，无法封装，请先安装：winget install Gyan.FFmpeg")
