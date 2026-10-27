@@ -22,10 +22,13 @@ CODEC_PREF = {"avc": 7, "hevc": 12, "av1": 13}
 CHUNK = 1 << 20  # CDN 常在 1~2 MB 后断开连接，所以用小分段。不要改：.state.json 按 idx*CHUNK 记录进度
 WORKERS = 16     # CDN 按连接限速（每连接约 1.3~1.5 MB/s），总速度随并发近似线性增长
 MAX_WORKERS = 32
-# upos 链接的签名在 query 里，换域名照样有效；实测这几个节点最快（见 SPEEDUP.md）
-FAST_HOSTS = ["upos-sz-mirror08c.bilivideo.com",
+# upos 链接的签名在 query 里，换域名照样有效；实测这几个节点最快（见 SPEEDUP.md、PLAYBACK.md）。
+# 节点会下线、速度也常变（08c 在 2026-10 已无法解析），所以在线播放按实测速度动态排序，这里的顺序只是初始值
+FAST_HOSTS = ["upos-sz-mirror08ct.bilivideo.com",
+              "upos-sz-mirrorhwb.bilivideo.com",
               "upos-sz-mirrorhw.bilivideo.com",
-              "upos-sz-mirrorali.bilivideo.com"]
+              "upos-sz-mirroralib.bilivideo.com",
+              "upos-sz-mirroraliov.bilivideo.com"]
 HOST_FAIL_LIMIT, HOST_COOLDOWN = 3, 60  # 节点连续失败 3 次就降到末尾，冷却 60 秒
 REFRESH_MIN_INTERVAL = 10               # 多个线程同时遇到过期链接时只刷新一次，避免 playurl 被 412
 # WBI 签名用的字符重排表（img_key + sub_key 按这个顺序取前 32 位）
@@ -221,6 +224,60 @@ class Stream:
         self.status = "pending"  # pending / running / done
 
 
+class HostHealth:
+    """各节点的连续失败次数、冷却时间和实测速度，多个线程共用。"""
+
+    def __init__(self, log=log):
+        self.log = log
+        self.lock = threading.Lock()
+        self.fails = {}  # host -> 连续失败次数
+        self.cool = {}   # host -> 冷却到期时间
+        self.hits = {}   # host -> 成功分段数，仅用于统计
+        self.speed = {}  # host -> 单连接速度的滑动平均（字节/秒）
+
+    def usable(self, urls):
+        """可用节点按原顺序排列；冷却中的节点只在全部节点都冷却时才用。"""
+        now = time.time()
+        with self.lock:
+            good = [u for u in urls if self.cool.get(host_of(u), 0) <= now]
+        return good or list(urls)
+
+    def ranked(self, urls, unknown_first=True):
+        """可用节点按实测速度从快到慢排列。还没测过的节点：unknown_first 时排在最前，好让每个节点都被试到；
+        否则排在测过的之后（急用的请求不拿没测过的节点冒险）。"""
+        good = self.usable(urls)
+        unknown = float("inf") if unknown_first else -1.0
+        with self.lock:
+            return sorted(good, key=lambda u: -self.speed.get(host_of(u), unknown))
+
+    def ok(self, u, chunk=True, nbytes=0, sec=0.0):
+        h = host_of(u)
+        with self.lock:
+            self.fails[h] = 0
+            if chunk:
+                self.hits[h] = self.hits.get(h, 0) + 1
+            if nbytes and sec > 0:
+                s = nbytes / sec
+                self.speed[h] = s if h not in self.speed else self.speed[h] * 0.7 + s * 0.3
+
+    def fail(self, u, err):
+        h = host_of(u)
+        with self.lock:
+            n = self.fails[h] = self.fails.get(h, 0) + 1
+            if h in self.speed:  # 失败也拉低速度估计，否则一个只是变慢的节点会一直排在前面；卡住超时的罚得更重
+                self.speed[h] *= 0.25 if "timed out" in str(err) else 0.5
+            if n < HOST_FAIL_LIMIT or self.cool.get(h, 0) > time.time():
+                return
+            self.cool[h] = time.time() + HOST_COOLDOWN
+            self.fails[h] = 0
+        self.log(f"节点 {h} 连续失败 {n} 次，降权 {HOST_COOLDOWN} 秒：{err}")
+
+    def demote(self, hosts):
+        with self.lock:
+            for h in hosts:
+                self.cool[h] = time.time() + HOST_COOLDOWN
+
+
 class Downloader:
     def __init__(self, api, stream, cancel=None, log=log, workers=WORKERS):
         self.api, self.st, self.cancel, self.log = api, stream, cancel, log
@@ -229,9 +286,7 @@ class Downloader:
         self.lock = threading.Lock()
         self.urls = stream.refresh()
         self.refreshed = 0.0
-        self.fails = {}  # host -> 连续失败次数（各线程共用）
-        self.cool = {}   # host -> 冷却到期时间
-        self.hits = {}   # host -> 成功分段数，仅用于统计
+        self.health = HostHealth(log)
 
     def _sleep(self, sec):
         if self.cancel:
@@ -241,29 +296,14 @@ class Downloader:
             time.sleep(sec)
 
     def _pool(self):
-        """可用节点按原顺序排列；冷却中的节点只在全部节点都冷却时才用。"""
-        now = time.time()
         with self.lock:
-            good = [u for u in self.urls if self.cool.get(host_of(u), 0) <= now]
-            return good or list(self.urls)
+            urls = list(self.urls)
+        return self.health.usable(urls)
 
     def _ok(self, u, chunk=True):
-        h = host_of(u)
-        with self.lock:
-            self.fails[h] = 0
-            if chunk:  # 只有真正下载分段才算"当前节点"，获取大小时各节点都会答复
-                self.hits[h] = self.hits.get(h, 0) + 1
-                self.st.host = h
-
-    def _fail(self, u, err):
-        h = host_of(u)
-        with self.lock:
-            n = self.fails[h] = self.fails.get(h, 0) + 1
-            if n < HOST_FAIL_LIMIT or self.cool.get(h, 0) > time.time():
-                return
-            self.cool[h] = time.time() + HOST_COOLDOWN
-            self.fails[h] = 0
-        self.log(f"节点 {h} 连续失败 {n} 次，降权 {HOST_COOLDOWN} 秒：{err}")
+        self.health.ok(u, chunk)
+        if chunk:  # 只有真正下载分段才算"当前节点"，获取大小时各节点都会答复
+            self.st.host = host_of(u)
 
     def _refresh(self):
         with self.lock:
@@ -280,8 +320,8 @@ class Downloader:
         self.log("链接已刷新")
 
     def host_stats(self):
-        with self.lock:
-            return dict(self.hits)
+        with self.health.lock:
+            return dict(self.health.hits)
 
     def _probe_size(self, u, out):
         try:
@@ -313,15 +353,13 @@ class Downloader:
                         size, deadline = sz, min(deadline, time.time() + 1.5)
                     continue
                 self.log("获取大小失败:", host_of(u), err)
-                self._fail(u, err)
+                self.health.fail(u, err)
                 if isinstance(err, urllib.error.HTTPError) and err.code in (403, 404):
                     deadline = min(deadline, time.time() + 2)  # 签名多半过期了，不必等卡住的节点
             if size is not None:
                 bad = {host_of(u) for u in pool} - ok
                 if bad and ok:  # 没及时答复或出错的节点先降权，分段下载一开始就走好节点
-                    with self.lock:
-                        for h in bad:
-                            self.cool[h] = time.time() + HOST_COOLDOWN
+                    self.health.demote(bad)
                     self.log(f"节点降权 {HOST_COOLDOWN} 秒（未及时响应或出错）:", ", ".join(sorted(bad)))
                 return size
             if round_ == 0:
@@ -352,14 +390,14 @@ class Downloader:
                 self._ok(u)
                 return idx
             except urllib.error.HTTPError as e:
-                self._fail(u, e)
+                self.health.fail(u, e)
                 if e.code in (403, 404):  # 签名链接过期，刷新
                     self._refresh()
                 self._sleep(min(2 * (attempt + 1), 20))
             except (Cancelled, KeyboardInterrupt):
                 raise
             except Exception as e:
-                self._fail(u, e)
+                self.health.fail(u, e)
                 self._sleep(min(1 + attempt, 15))
         raise RuntimeError(f"分段 {idx} 多次重试仍失败")
 

@@ -9,6 +9,7 @@
 - **字幕**：可以同时下载 B 站的人工字幕和 AI 字幕，存成和视频同名的 .srt，也可以只下字幕（需要登录）。
 - **弹幕**：可以同时下载弹幕，转成和视频同名的 .danmaku.ass，PotPlayer、VLC 打开视频就能看到滚动弹幕（需要装 biliass）。
 - **网页界面**：选择清晰度时能看到各档的估算大小，可以勾选分P、选择保存目录，并实时查看进度、速度和剩余时间。
+- **在线播放加速**：配合 Chrome 插件，在 B 站网页上看视频时，播放器的请求交给 bilidl 多线程预读，4K 倍速播放也不卡；弹幕、评论、历史记录照常。不用先下载。
 
 <p align="center"><img src="docs/images/web-ui.png" alt="bilidl 网页界面：解析视频后选择清晰度（显示各档估算大小）、勾选分P、选择保存目录和线程数" width="760"></p>
 
@@ -111,6 +112,21 @@ python bilidl_web.py --no-browser # 只启动服务
 - 插件会读取 Chrome 里 bilibili.com 的 `SESSDATA` cookie，和 bilidl 保存的不一样时自动更新 `sessdata.txt`，以后不用再按 F12 手动复制。Chrome 里没登录时不会改动 bilidl 的 cookie。
 - 更新 bilidl 后如果插件文件有变化，到 `chrome://extensions` 点插件上的刷新按钮，再刷新 B 站页面。
 
+### 在线播放加速（Chrome 插件 1.1 起）
+
+B 站网页播放器的所有视频请求都走同一条连接，被 CDN 的单连接限速（约 1 MB/s）卡住，API 默认给的节点有时还只有零点几 MB/s，所以高画质、倍速时容易转圈。装了插件后，播放器向 CDN 要视频分段的请求会被转到本机的 bilidl-web：它把请求拆成 1 MB 的块，用多个线程从实测最快的节点并发拉取，并提前预读约 90 秒，倍速时预读量自动跟着变大。画面还是 B 站自己的播放器，弹幕、评论、清晰度切换、历史记录都不受影响。
+
+<p align="center"><img src="docs/images/playback.jpg" alt="在 B 站网页上播放 4K HDR 视频，右侧 bilidl 插件面板顶部显示「播放加速中 · 节点 aliov · 18.2 MB/s」，下面列出各清晰度和预计大小" width="760"></p>
+
+1. 按上一节装好插件（已经装过的，到 `chrome://extensions` 点插件上的刷新按钮，插件会多申请几个权限），并确认 bilidl-web 在运行。
+2. 打开 B 站视频页。第一次 Chrome 会在地址栏下方询问「是否允许 www.bilibili.com 访问本地网络上的设备」，点**允许**。这是 Chrome 的「本地网络访问」保护，不允许的话加速不会生效，视频照常直连播放。
+3. 点右下角「⬇ 下载」可以看到加速状态：「⚡ 播放加速中 · 预读领先 xx 秒 · 节点 xx · x MB/s」，旁边可以关闭/开启。网页界面最下方也有「在线播放加速」一栏。
+
+注意：
+- 只在确认能连上 bilidl-web 的标签页里开启转发。bilidl-web 中途退出或出错时，插件会立刻改回直连，视频接着放；bilidl-web 重新运行后 10 秒内自动恢复加速。
+- 预读的数据只放在内存里（所有视频合计最多约 800 MB），视频闲置 10 分钟就释放，不写硬盘。
+- 原理、实测数据和设计细节见 [docs/PLAYBACK.md](docs/PLAYBACK.md)。
+
 ### 开机自动在后台运行
 
 ```powershell
@@ -124,10 +140,11 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 
 浏览器里的任何网页都能向 `127.0.0.1` 发请求，所以本地接口做了这些防护：
 
-- 每次启动随机生成一个 token，只嵌在本服务返回的页面里。所有 `/api/*` 请求都必须带上 `X-Token` 请求头，服务端也不返回任何 CORS 头。
+- 每次启动随机生成一个 token，只嵌在本服务返回的页面里。所有 `/api/*` 请求都必须带上 `X-Token` 请求头，这些接口也不返回任何 CORS 头。
 - Chrome 插件通过 `/api/token` 取 token：没有 CORS 头，普通网页读不到响应；带了 `Origin` 头但不是 `chrome-extension://` 的请求直接拒绝。
 - 校验 `Host` 请求头，防止 DNS rebinding 攻击读取页面里的 token。
 - 「打开文件夹」接口只能打开任务的保存目录，或用户自己选过的目录。
+- 在线播放用的 `/play/` 不需要 token（重定向过来的请求带不了），但只转发 `https://upos-*.bilivideo.com` / `upos-*.akamaized.net` 上的 `.m4s` 视频分段，不带任何 cookie；CORS 只放行 bilibili.com 的页面。网页要访问本机服务还得先通过 Chrome 的「本地网络访问」授权。
 - 不记录请求内容，cookie 不会出现在日志或接口返回里。
 
 ## 下载是怎么提速的
@@ -135,7 +152,7 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 详细的测量数据见 [docs/SPEEDUP.md](docs/SPEEDUP.md)。简单来说：
 
 1. **CDN 对每个连接单独限速**，总速度随并发线程数近似线性增长。所以按 1 MB 分段，用 Range 请求多线程并发下载。
-2. **upos 链接的签名在 query 参数里**，换个域名照样有效。所以把链接的域名换成实测更快的节点（`upos-sz-mirror08c` / `mirrorhw` / `mirrorali`），API 返回的原始链接放在最后兜底。
+2. **upos 链接的签名在 query 参数里**，换个域名照样有效。所以把链接的域名换成实测更快的节点（`FAST_HOSTS`，目前是 `mirror08ct` / `mirrorhwb` / `mirrorhw` / `mirroralib` / `mirroraliov`），API 返回的原始链接放在最后兜底。节点会下线、快慢也常变，在线播放是按实测速度动态挑节点的，见 [docs/PLAYBACK.md](docs/PLAYBACK.md)。
 3. **节点健康度**：
    - 下载前同时向所有节点请求文件大小，没有及时答复的节点先降权；
    - 下载中某个节点连续失败 3 次，就冷却 60 秒。
@@ -147,13 +164,15 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 |---|---|
 | `bilidl.py` | 核心模块和命令行入口，可以作为模块 import |
 | `bilidl_web.py` | 本地网页服务（标准库 `ThreadingHTTPServer`） |
+| `bilidl_play.py` | 在线播放加速：分块缓存、多线程预读、按实测速度挑节点，由 `bilidl_web.py` 的 `/play/` 调用 |
 | `bilidl_web.html` | 网页前端，单文件，没有外部依赖，支持浅色/深色模式 |
 | `bilidl.cmd` / `bilidl-web.cmd` | Windows 命令行启动器 |
 | `一键启动.bat` / `launch.ps1` | 双击启动：检查并可自动安装 Python 和 ffmpeg，然后启动网页界面 |
 | `install-autostart.ps1` | 安装或取消开机自启 |
-| `chrome-extension/` | Chrome 插件：在 B 站视频页加「下载」按钮，交给本地服务下载 |
+| `chrome-extension/` | Chrome 插件：在 B 站视频页加「下载」按钮，交给本地服务下载；把播放器的视频请求转给本地服务预读 |
 | `docs/DEVNOTES.md` | 开发笔记：踩过的坑、核心 API、网页界面设计 |
 | `docs/SPEEDUP.md` | 提速方案和测量数据 |
+| `docs/PLAYBACK.md` | 在线播放加速：B 站播放器的取数方式、方案设计和实测数据 |
 | `docs/SUBTITLES.md` | 字幕接口的实测情况，以及 B 站不提供字幕时的替代方案 |
 | `docs/DANMAKU.md` | 弹幕的数据源、转 ASS 的样式参数、各播放器怎么显示 |
 | `tests/` | 手动验收脚本（会真实访问 B 站），见 [tests/README.md](tests/README.md) |
@@ -164,7 +183,8 @@ powershell -ExecutionPolicy Bypass -File install-autostart.ps1 -Remove  # 取消
 - 只支持普通视频（BV 号），不支持番剧、课程和直播。
 - 字幕只能下载 B 站已有的（人工或 AI 字幕）。约三成视频连 AI 字幕都没有，替代方案见 [docs/SUBTITLES.md](docs/SUBTITLES.md)。
 - 弹幕只有接口公开下发的部分（和网页、客户端看到的一样），没有历史弹幕；ASS 弹幕播放时不能调密度和透明度。
-- CDN 节点的快慢和网络环境有关，`FAST_HOSTS` 是在作者的网络下测出来的。
+- CDN 节点的快慢和网络环境有关，`FAST_HOSTS` 是在作者的网络下测出来的，而且节点会下线（2026-10 时 `mirror08c` 已经解析不到）。下载按列表顺序用节点；在线播放按实测速度排序。
+- 在线播放加速只支持 Chrome（依赖 declarativeNetRequest 和「本地网络访问」授权），番剧页面理论上可用但没有实测过。
 
 ## License
 
