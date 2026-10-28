@@ -111,6 +111,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
     "lna-denied": "播放加速被 Chrome 拦截：点地址栏左侧的网站设置图标，把「本地网络访问」改为允许，再刷新页面",
     "not-running": "播放加速未生效：bilidl 没有运行，现在是直连播放",
     "proxy-failed": "播放加速暂停：bilidl 出错或已退出，已改回直连，稍后自动重试",
+    "proxy-errors": "播放加速暂停：经 bilidl 的请求连续出错，已改回直连，稍后自动重试",
   };
 
   function renderAccel(s) {
@@ -128,7 +129,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
       text.textContent = parts.join(" · ");
     } else {
       text.textContent = WHY[s.why] || WHY.checking;
-      if (s.why === "proxy-failed" && s.detail)
+      if ((s.why === "proxy-failed" || s.why === "proxy-errors") && s.detail)
         text.textContent += `（${Math.round((Date.now() - s.at) / 1000)} 秒前：${s.detail}）`;
     }
     accel.className = "accel" + (s.on ? " on" : ["lna-denied", "lna-prompt", "not-running"].includes(s.why) ? " warn" : "");

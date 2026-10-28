@@ -752,6 +752,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, {"error": "Origin 不允许"})
             return
         target = self.path[len("/play/"):]
+        t0 = time.time()
         try:
             if PLAYER is None:
                 raise bilidl_play.PlayError(503, "播放加速没有启动")
@@ -772,19 +773,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send_play_error(502, friendly(e), cors)
             return
         partial = self.headers.get("Range") is not None
-        self.send_response(206 if partial else 200)
         hdrs = {**cors, "Content-Type": "video/mp4", "Content-Length": str(end - start + 1), "Accept-Ranges": "bytes",
                 "Cache-Control": "no-store"}
         if partial:
             hdrs["Content-Range"] = f"bytes {start}-{end}/{size}"
-        for k, v in hdrs.items():
-            self.send_header(k, v)
-        self.end_headers()
         try:
+            self.send_response(206 if partial else 200)
+            for k, v in hdrs.items():
+                self.send_header(k, v)
+            self.end_headers()
             for piece in body:
                 self.wfile.write(piece)
         except (ConnectionError, OSError):
-            pass  # 播放器取消了请求（比如跳转）
+            # 播放器取消了请求（比如跳转）。等了很久才断开的，多半是播放器自己等不及放弃了
+            waited = time.time() - t0
+            if waited >= bilidl_play.SLOW_LOG:
+                name = urllib.parse.urlsplit(target).path.rsplit("/", 1)[-1]
+                bilidl.log(f"播放器等了 {waited:.1f} 秒后断开了请求：{name} bytes={start}-{end}")
         except bilidl_play.PlayError as e:  # 响应头已经发出，只能断开连接，播放器会重试
             bilidl.log("在线播放中途出错:", e)
             self.close_connection = True
