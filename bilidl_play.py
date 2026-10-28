@@ -25,6 +25,7 @@ FETCH_TIMEOUT = 5                        # 连续这么多秒收不到数据就�
 HEDGE_AFTER = 2.5                        # 播放器在等的块 2.5 秒还没拉完，就同时向另一个节点再拉一份，谁先到用谁
 URGENT_WORKERS = 4                       # 另有 4 个线程只拉播放器在等的块，预读把普通线程占满时也不用排队
 URGENT_WAIT = 30                         # 播放器的一个请求最多等 30 秒，超时就报错让播放器自己重试
+SLOW_LOG = 10                            # 播放器等一个块（或一个请求）超过 10 秒就记日志，排查卡顿和插件退回直连用
 AUDIO_IDS = {"30216", "30232", "30280", "30250", "30251"}
 HEADERS = {"User-Agent": bilidl.UA, "Referer": "https://www.bilibili.com/"}
 TARGET_HOST = re.compile(r"^upos-[a-z0-9-]+\.(bilivideo\.com|akamaized\.net)$")
@@ -44,7 +45,7 @@ class Task:
 
     def __init__(self, res, idx, prio, gen):
         self.res, self.idx, self.prio, self.gen = res, idx, prio, gen
-        self.started = self.finished = self.hedged = False
+        self.started = self.finished = self.hedged = self.slow_logged = False
         self.waiters = 0
         self.running = 0         # 正在拉这个块的线程数（对冲时为 2）
         self.host = ""
@@ -129,7 +130,8 @@ class Cache:
 
     def chunk(self, res, idx):
         """取一个块，没有就以最高优先级去拉，等它拉完。"""
-        deadline = time.time() + URGENT_WAIT
+        t0 = time.time()
+        deadline = t0 + URGENT_WAIT
         while True:
             with self.lock:
                 data = res.chunks.get(idx)
@@ -157,6 +159,11 @@ class Cache:
             if not done:
                 raise PlayError(504, f"{res.name} 第 {idx} 块等待超时")
             if t.data is not None:
+                # 等待超时和出错由 bilidl_web 记日志，这里只记拿到了但等了很久的；几个请求等同一块时只记一次
+                if time.time() - t0 >= SLOW_LOG and not t.slow_logged:
+                    t.slow_logged = True
+                    self.log(f"在线播放等待较久：{res.name} 第 {idx} 块 {time.time() - t0:.1f} 秒"
+                             f"（节点 {t.host}{'，已对冲' if t.hedged else ''}）")
                 return t.data
             if t.error:
                 raise PlayError(502, t.error)

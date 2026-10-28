@@ -106,25 +106,36 @@ const proxyFails = new Map();  // tabId -> 连续偶发错误次数
 const PLAY_FILTER = { urls: [BASE + "/play/*"] };
 // 这些错误说明 bilidl 已经退出或连不上，立刻退回直连；其他错误先计数
 const SERVER_GONE = new Set(["net::ERR_CONNECTION_REFUSED", "net::ERR_CONNECTION_RESET", "net::ERR_CONNECTION_CLOSED",
-                             "net::ERR_EMPTY_RESPONSE", "net::ERR_ADDRESS_UNREACHABLE", "net::ERR_FAILED"]);
+                             "net::ERR_EMPTY_RESPONSE", "net::ERR_ADDRESS_UNREACHABLE"]);
+// net::ERR_FAILED 是 Chrome 的通用错误码，bilidl 好好的时候也会出现（请求被 Chrome 内部拦下或取消），
+// 只凭它就退回直连会误判。所以先连一下本机服务：连不上才算退出，连得上就按偶发错误计数
+const AMBIGUOUS = new Set(["net::ERR_FAILED"]);
+const ALIVE_MS = 3000;
 
-// detail 记下触发的错误，面板上显示出来，方便判断原因
-async function fallback(tabId, detail) {
+// 有任何 HTTP 响应就算服务还在（后台请求的 Origin 是扩展，/play/ 会回 403，这里不看状态码）
+function serverAlive() {
+  return fetch(BASE + "/play/ping", { cache: "no-store", signal: AbortSignal.timeout(ALIVE_MS) }).then(() => true, () => false);
+}
+
+// why 区分「服务退出」和「连续出错」，面板文案不同；detail 记下触发的错误，面板上显示出来，方便判断原因
+async function fallback(tabId, detail, why = "proxy-failed") {
   proxyFails.delete(tabId);
   await setPlayRule(tabId, false);
-  await chrome.storage.session.set({ ["play" + tabId]: { on: false, why: "proxy-failed", detail, at: Date.now(),
+  await chrome.storage.session.set({ ["play" + tabId]: { on: false, why, detail, at: Date.now(),
                                                         until: Date.now() + FALLBACK_MS } });
 }
 
 function sporadic(tabId, detail) {
   const n = (proxyFails.get(tabId) || 0) + 1;
   proxyFails.set(tabId, n);
-  if (n >= FAIL_LIMIT) fallback(tabId, `连续 ${n} 次出错，最后一次：${detail}`).catch(() => {});
+  if (n >= FAIL_LIMIT) fallback(tabId, `连续 ${n} 次出错，最后一次：${detail}`, "proxy-errors").catch(() => {});
 }
 
 chrome.webRequest.onErrorOccurred.addListener(d => {
   if (!(d.tabId > 0) || d.url.endsWith("/play/ping") || d.error === "net::ERR_ABORTED") return;  // 跳转时播放器会主动取消请求
   if (SERVER_GONE.has(d.error)) fallback(d.tabId, d.error).catch(() => {});
+  else if (AMBIGUOUS.has(d.error))
+    serverAlive().then(up => up ? sporadic(d.tabId, d.error) : fallback(d.tabId, d.error)).catch(() => {});
   else sporadic(d.tabId, d.error);
 }, PLAY_FILTER);
 
