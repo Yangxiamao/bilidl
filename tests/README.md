@@ -13,6 +13,8 @@
 | `web_threads_test.py <输出目录>` | 需要先启动服务。测线程数设置的校验和当前节点显示 | 约 75 MB |
 | `play_test.py [端口] [BV号]` | 需要先启动服务。在线播放代理 `/play/`：经代理和直连取同样的 Range 逐字节比较（跨块、不对齐、文件末尾、超出范围）、只给 akamai 链接时换快节点、同一块并发请求只拉一次、CORS 和目标链接校验、`/api/play_stats` | 约 100 MB（含预读） |
 | `play_bench.py [端口] [BV号] [direct\|proxy\|both]` | 需要先启动服务。按码率 × 倍速模拟网页播放器取数（1x → 2x → 跳到 60% → 3x），比较直连 API 给的节点和经代理的卡顿次数、起播时间、请求耗时。默认视频是一个约 2.5 小时的 4K 演唱会 | 直连约 100 MB，代理约 1 GB |
+| `node h2_bench.mjs [BV号] [每组秒数] [节点,…]` | 纯插件方案的前提：CDN 按 TCP 连接还是按 HTTP/2 stream 限速。比较 1 条 h2 连接上 1/4/16 个并发请求、4/16 条独立 HTTP/1.1 连接、4 条 h2 连接的速度，并列出各节点解析到的 IP。需要 Node 18+，见 [docs/EXTENSION_ONLY.md](../docs/EXTENSION_ONLY.md) | 约 速度 × 每组秒数 × 18 组，几 GB，可以把秒数调小 |
+| `node chrome_spike.mjs [BV号] [每组秒数] [--takeover]` | 用临时 profile 启动无头 Chrome（游客），记录播放器从哪里发 m4s 请求；`--takeover` 时在页面里接管这些请求、拆成并发 fetch 交还给播放器，看视频能否照常播放；再在页面里测并发 fetch 的速度和实际连接数。需要 Node 22+ 和 Chrome | 约 1 GB |
 | `sub_test.py <输出目录>` | 字幕选择规则和 SRT 格式（离线）、字幕列表多次请求是否一致、下载和跳过已存在、未登录时的提示。第 2、3 步需要登录 | 不到 1 MB |
 | `danmaku_test.py <输出目录>` | 多个 protobuf 分段一起转 ASS（离线）、联网下载和跳过已存在、没装 biliass 时的提示。需要先 `python -m pip install biliass` | 约 1 MB |
 
