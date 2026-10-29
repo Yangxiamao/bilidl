@@ -1,5 +1,5 @@
 // 纯插件方案的前提：CDN 是按 TCP 连接限速，还是按 HTTP/2 stream（单个请求）限速？
-// 浏览器对同一域名只开一条 HTTP/2 连接，所以只有按 stream 限速时，页面里并发请求才能提速（见 docs/EXTENSION_ONLY.md）。
+// 浏览器对同一域名只开一条 HTTP/2 连接，所以只有按 stream 限速时，页面里并发请求才能提速（见 https://github.com/Yangxiamao/bilifast/blob/main/docs/EXTENSION_ONLY.md）。
 // 用法: node tests/h2_bench.mjs [BV号] [每组秒数] [节点,节点…]
 // 流量：约 速度 × 秒数 × 组数，默认几百 MB。
 import http2 from "node:http2";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const BVID = process.argv[2] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会，和 play_ext_test.mjs 一样
+const BVID = process.argv[2] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会，和 bilifast 的 play_ext_test.mjs 一样
 const SEC = Number(process.argv[3] || 8);
 const MB = 1 << 20;
 const HEADERS = { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
