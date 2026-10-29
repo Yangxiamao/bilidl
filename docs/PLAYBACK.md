@@ -1,6 +1,6 @@
 # 在线播放加速：把多线程分段用在 B 站网页播放器上
 
-> **旧方案，已删除。** 这一页记录的是 v1.0.x 里「插件 DNR 重定向 + bilidl-web 本地代理（`/play/`、`bilidl_play.py`）」的设计和实测。v1.1.0 起它被纯插件的播放加速（`extension-play/`，见 [PLAY_EXTENSION.md](PLAY_EXTENSION.md)）替代，相关代码和 `tests/play_test.py`、`tests/play_bench.py` 都已删除，要看可以在 git 历史里找（v1.0.1）。这里的节点实测和播放器取数方式仍可参考。
+> **旧方案，已删除。** 这一页记录的是 v1.0.x 里「插件 DNR 重定向 + bilidl-web 本地代理（`/play/`、`bilidl_play.py`）」的设计和实测。v1.1.0 起它被纯插件的播放加速（已拆到 bilifast 仓库，见 [PLAY_EXTENSION.md](https://github.com/Yangxiamao/bilifast/blob/main/docs/PLAY_EXTENSION.md)）替代，相关代码和 `tests/play_test.py`、`tests/play_bench.py` 都已删除，要看可以在 git 历史里找（v1.0.1）。这里的节点实测和播放器取数方式仍可参考。
 
 ## 结论
 B 站网页播放器卡顿，根子和下载慢是同一个：**CDN 对每个连接单独限速**。播放器的所有视频分段请求都走**同一条 HTTP/2 连接**，而且 API 默认给的节点（`mirrorcosov`）常常只有零点几 MB/s。4K 的平均码率约 2 MB/s，2 倍速就要 4 MB/s，单连接根本跟不上。
@@ -33,7 +33,7 @@ B 站网页播放器卡顿，根子和下载慢是同一个：**CDN 对每个连
 - akamai 的链接也带 `upsig`，**把域名换成 upos 节点照样有效**（多出来的 `hdnts` 参数会被忽略）。SPEEDUP.md 里「akamaized 签名方式不同、不要换域名」的说法现在不成立了。
 
 ### 播放器怎么取数据（无头 Chrome + CDP 记录网络请求）
-- 视频和音频分段都是在 **Worker 里用 XHR** 发的（2026-10-29 再测时已经改成主线程 XHR，见 [EXTENSION_ONLY.md](EXTENSION_ONLY.md)；DNR 重定向不受影响），带 `Range: bytes=a-b` 请求头，一个请求一个 DASH 分段（360P 视频约 100~250 KB，音频约 30 KB），先取 `bytes=0-xxx` 的初始化段和 sidx。
+- 视频和音频分段都是在 **Worker 里用 XHR** 发的（2026-10-29 再测时已经改成主线程 XHR，见 [EXTENSION_ONLY.md](https://github.com/Yangxiamao/bilifast/blob/main/docs/EXTENSION_ONLY.md)；DNR 重定向不受影响），带 `Range: bytes=a-b` 请求头，一个请求一个 DASH 分段（360P 视频约 100~250 KB，音频约 30 KB），先取 `bytes=0-xxx` 的初始化段和 sidx。
 - **全部请求复用一条 HTTP/2 连接**，所以整个播放器只有一条连接的带宽。
 - 播放器自己最多缓冲到领先播放位置约 **72 秒**，2 倍速时也是 72 秒（墙上时间只剩 36 秒）。
 - cosov 偶尔一个分段几秒没响应，播放器报 `Fragment Loaded Error` 后换到 akamai 重试，再换回 cosov。

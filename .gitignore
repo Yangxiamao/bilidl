@@ -18,5 +18,5 @@ config.json.tmp
 __pycache__/
 *.pyc
 
-# 插件打包产物（node tools/build_ext.mjs）
+# 插件打包产物
 dist/
