@@ -173,12 +173,6 @@ button.big { width: 100%; padding: 10px; font-size: 15px; margin-top: 16px; }
     <div id="jobs"></div>
   </section>
 
-  <section class="card">
-    <h2>在线播放加速</h2>
-    <p class="hint">装好 Chrome 插件后直接在 B 站网页上看视频即可，播放器的请求会交给这里多线程预读，倍速也不卡。第一次 Chrome 会询问是否允许 B 站访问本地网络，点「允许」。</p>
-    <div id="playInfo" class="hint"></div>
-    <div id="playList"></div>
-  </section>
 </main>
 <div id="toast"></div>
 
@@ -565,29 +559,6 @@ async function poll() {
   polling = false;
 }
 
-// ---------- 在线播放加速 ----------
-function shortHost(h) { return h ? h.replace(/^upos-(sz-|hz-)?(mirror)?/, "").replace(/\..*$/, "") : "-"; }
-
-async function pollPlay() {
-  try {
-    const s = await api("/api/play_stats");
-    const active = s.resources.filter(r => r.idle < 60);
-    const parts = [active.length ? `正在加速 ${active.length} 路（视频和音频分开算）` : "现在没有在播放的视频",
-                   `预读占用内存 ${fmtBytes(s.mem)} / ${fmtBytes(s.mem_max)}`];
-    if (s.hosts.length)
-      parts.push("节点单连接速度：" + s.hosts.slice(0, 4).map(h => `${shortHost(h.host)} ${(h.speed / 1e6).toFixed(1)}`).join("、") + " MB/s");
-    setText($("playInfo"), parts.join(" · "));
-    const rows = active.map(r => `${r.kind === "audio" ? "音频" : "视频"} ${r.name} · `
-      + (r.ahead_sec != null ? `预读领先 ${Math.round(r.ahead_sec)} 秒` : `已预读 ${fmtBytes(r.ahead)}`)
-      + ` · 节点 ${shortHost(r.host)} · ${(r.speed / 1e6).toFixed(1)} MB/s`);
-    const list = $("playList");
-    if (list.dataset.rows !== rows.join("\n")) {
-      list.dataset.rows = rows.join("\n");
-      list.replaceChildren(...rows.map(t => el("div", "hint", t)));
-    }
-  } catch (e) { setText($("playInfo"), "播放加速状态暂时取不到：" + e.message); }
-}
-
 // ---------- 启动 ----------
 (async () => {
   try {
@@ -605,8 +576,6 @@ async function pollPlay() {
   } catch (e) { toast(e.message, true); }
   poll();
   setInterval(poll, 1000);
-  pollPlay();
-  setInterval(pollPlay, 2000);
   $("url").focus();
   // Chrome 插件的「更多选项」会打开 /?url=<视频链接>：自动填好并解析，再把地址栏改回 /，刷新时不重复解析
   const pre = new URLSearchParams(location.search).get("url");

@@ -43,7 +43,7 @@ async function main() {
     const zip = path.join(ROOT, "dist", `extension-play-${version}.zip`);
     fs.rmSync(zip, { force: true });
     // Windows 10+ 和 macOS 自带的 bsdtar 能打 zip；Windows 上 PATH 里可能先是 Git 带的 GNU tar（不会打 zip），所以写全路径
-    const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\Windows", "System32", "tar.exe") : "tar";
+    const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
     execFileSync(tar, ["-a", "-cf", path.relative(OUT, zip), "."], { cwd: OUT });
     console.log("已打包", zip);
   }

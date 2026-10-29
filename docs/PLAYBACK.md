@@ -1,5 +1,7 @@
 # 在线播放加速：把多线程分段用在 B 站网页播放器上
 
+> **旧方案，已删除。** 这一页记录的是 v1.0.x 里「插件 DNR 重定向 + bilidl-web 本地代理（`/play/`、`bilidl_play.py`）」的设计和实测。v1.1.0 起它被纯插件的播放加速（`extension-play/`，见 [PLAY_EXTENSION.md](PLAY_EXTENSION.md)）替代，相关代码和 `tests/play_test.py`、`tests/play_bench.py` 都已删除，要看可以在 git 历史里找（v1.0.1）。这里的节点实测和播放器取数方式仍可参考。
+
 ## 结论
 B 站网页播放器卡顿，根子和下载慢是同一个：**CDN 对每个连接单独限速**。播放器的所有视频分段请求都走**同一条 HTTP/2 连接**，而且 API 默认给的节点（`mirrorcosov`）常常只有零点几 MB/s。4K 的平均码率约 2 MB/s，2 倍速就要 4 MB/s，单连接根本跟不上。
 
