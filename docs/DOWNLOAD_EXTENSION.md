@@ -71,7 +71,7 @@ B 站的 m4s 是 SegmentBase 形式的 fMP4：`ftyp`、`moov`（样本表是空�
 保存目录：设置页里 `showDirectoryPicker` 选一次，句柄存进 IndexedDB，Worker 直接用它写。授权能不能记住，在有界面的 Chrome 里请人配合测了（`tests/dl_ext_test.mjs fsa`）：
 - 选目录后，页面和后台 Worker 里都是 `granted`，文件写进了选的目录。
 - **正常关闭再打开 Chrome 后变成 `prompt`**（要重新授权），这时只存得到下载目录（插件会自动改存下载目录，并在弹出页提示）。
-- 在设置页点「重新授权」后，再关掉、打开一次，仍然是 `granted`：Chrome 的「持久授权」对插件也生效，只是第一次选目录时不会直接给持久授权，要在第一次重启后重新授权一次（重新授权时弹出的提示里要选「始终允许」一类的选项）。所以弹出页在授权失效时会提示「需要重新授权」，设置页有「重新授权」按钮。
+- 在设置页点「重新授权」后，再关掉、打开一次，仍然是 `granted`：Chrome 的「持久授权」对插件也生效，只是第一次选目录时不会直接给持久授权，要在第一次重启后重新授权一次：这时 Chrome 的提示里有「始终允许」，选它以后，重启也不会再失效。所以弹出页在授权失效时会提示「需要重新授权」，设置页有「重新授权」按钮。
 
 没有选目录、或者授权失效时，用 `chrome.downloads` 存到下载目录：后台 service worker 里没有 `URL.createObjectURL`，所以由 offscreen document 建 blob URL。多P视频用 `标题/P1 分P名.mp4` 的相对路径，`conflictAction: "uniquify"` 不覆盖同名文件。
 
