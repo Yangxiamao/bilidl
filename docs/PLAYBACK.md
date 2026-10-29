@@ -31,7 +31,7 @@ B 站网页播放器卡顿，根子和下载慢是同一个：**CDN 对每个连
 - akamai 的链接也带 `upsig`，**把域名换成 upos 节点照样有效**（多出来的 `hdnts` 参数会被忽略）。SPEEDUP.md 里「akamaized 签名方式不同、不要换域名」的说法现在不成立了。
 
 ### 播放器怎么取数据（无头 Chrome + CDP 记录网络请求）
-- 视频和音频分段都是在 **Worker 里用 XHR** 发的，带 `Range: bytes=a-b` 请求头，一个请求一个 DASH 分段（360P 视频约 100~250 KB，音频约 30 KB），先取 `bytes=0-xxx` 的初始化段和 sidx。
+- 视频和音频分段都是在 **Worker 里用 XHR** 发的（2026-10-29 再测时已经改成主线程 XHR，见 [EXTENSION_ONLY.md](EXTENSION_ONLY.md)；DNR 重定向不受影响），带 `Range: bytes=a-b` 请求头，一个请求一个 DASH 分段（360P 视频约 100~250 KB，音频约 30 KB），先取 `bytes=0-xxx` 的初始化段和 sidx。
 - **全部请求复用一条 HTTP/2 连接**，所以整个播放器只有一条连接的带宽。
 - 播放器自己最多缓冲到领先播放位置约 **72 秒**，2 倍速时也是 72 秒（墙上时间只剩 36 秒）。
 - cosov 偶尔一个分段几秒没响应，播放器报 `Fragment Loaded Error` 后换到 akamai 重试，再换回 cosov。
