@@ -1,7 +1,7 @@
 # 纯插件的在线播放加速（extension-play/）
 
 ## 结论
-只装一个 Chrome 插件、不需要本地程序，在线播放加速的效果和 bilidl-web 的本地代理（[PLAYBACK.md](PLAYBACK.md)）相当。真实 B 站播放器锁定 4K（2880x2160），1x → 2x → 跳到 60% → 3x：
+只装一个 Chrome 插件、不需要本地程序，在线播放加速的效果和以前 bilidl-web 的本地代理（[PLAYBACK.md](PLAYBACK.md)，已删除）相当。真实 B 站播放器锁定 4K（2880x2160），1x → 2x → 跳到 60% → 3x：
 
 | 阶段 | 直连 | 插件（中档） |
 |---|---|---|
@@ -15,24 +15,28 @@
 - 只需要 `storage` 权限，没有 host 权限，没有远程代码，适合上架 Chrome Web Store。
 
 ## 怎么装（开发版）
+普通用户从 Releases 下载打包好的 zip，见 [README](../README.md#安装)。从源代码装：
+
 1. `node tools/build_ext.mjs`，生成 `dist/extension-play/`（`--zip` 时另外打一个上架用的 zip）。
 2. Chrome 打开 `chrome://extensions`，打开「开发者模式」，「加载已解压的扩展程序」选 `dist/extension-play`。
 3. 打开（或刷新）B 站视频页。点工具栏上的插件图标看状态、开关、切换档位；图标角标是「播放器缓冲 + 插件预读」领先的秒数（取整到 10 秒），关闭时显示「关」。
 
-如果同时装着旧的 bilidl 插件（chrome-extension/）并且 bilidl 在运行，旧插件的 DNR 规则会把新插件的请求也转到 127.0.0.1。两个一起用时请关掉旧插件的「播放加速」。
+从 v1.0.x 升级的：旧的下载插件（chrome-extension/）里的播放加速已经去掉，到 `chrome://extensions` 点它的刷新按钮即可，两个插件可以同时装、互不影响。
 
 ## 设计
-和 [PLAYBACK.md](PLAYBACK.md) 的本地代理是同一套算法，只是从 Python 线程搬到了页面里的异步并发；为什么页面里并发就能提速见 [EXTENSION_ONLY.md](EXTENSION_ONLY.md)。
+和已删除的旧方案（bilidl-web 本地代理，[PLAYBACK.md](PLAYBACK.md)）是同一套算法，只是从 Python 线程搬到了页面里的异步并发；为什么页面里并发就能提速见 [EXTENSION_ONLY.md](EXTENSION_ONLY.md)。
 
 ### 文件
 | 文件 | 作用 |
 |---|---|
-| `shared/hosts.js` | 节点列表、按实测速度排序（`HostHealth`）、挑节点。以后下载插件也用。`HostHealth` 和 `bilidl.py` 的同名类一致，挑节点的规则比 `bilidl_play.py` 新（见下文） |
-| `extension-play/src/engine.js` | 分块缓存和调度（`bilidl_play.py` 的 JS 版）。不碰 DOM 和 XHR，fetch 从外面传进来，可以离线测 |
+| `shared/hosts.js` | 节点列表、按实测速度排序（`HostHealth`）、挑节点。以后下载插件也用。节点列表和失败冷却规则与 `bilidl.py` 一致，挑节点的规则见下文 |
+| `extension-play/src/engine.js` | 分块缓存和调度（从旧的本地代理 `bilidl_play.py` 移植）。不碰 DOM 和 XHR，fetch 从外面传进来，可以离线测 |
 | `extension-play/src/hook.js` | 接管播放器的 XHR，和 bridge 通信 |
 | `extension-play/bridge.js` | ISOLATED world 内容脚本：设置从 `chrome.storage` 转给页面，状态转给弹出页，通知后台更新角标 |
 | `extension-play/background.js` | 只设置角标 |
 | `extension-play/popup.*` | 开关、档位、状态 |
+| `extension-play/store/` | 图标的 SVG 源文件、商店图片的 HTML 源文件，以及上架 Chrome 应用商店用的文字（`listing.md`）、隐私说明（`PRIVACY.md`）和待办清单（`CHECKLIST.md`）。不打进插件 |
+| `tools/make_icons.mjs` | 用无头 Chrome 把 `store/` 里的 SVG、HTML 渲染成 `icons/*.png` 和商店图片 |
 | `tools/build_ext.mjs` | 把 `shared/hosts.js`、`engine.js`、`hook.js` 去掉 import/export 后合成一个 IIFE 的 `page.js`（MAIN world 和页面共用全局作用域，不能往上面挂变量），复制其余文件到 `dist/extension-play/` |
 
 ### 权限
@@ -45,7 +49,7 @@
 - engine 出任何错（所有节点都失败、等待超过 30 秒、起点超出文件末尾等）都改调原来的 `send`，等于退回直连；超出末尾的请求因此拿到 CDN 真正的 416。
 
 ### 缓存和调度（engine.js）
-逐条对应 `bilidl_play.py`：
+逐条对应旧的本地代理 `bilidl_play.py`（[PLAYBACK.md](PLAYBACK.md)）：
 - 1 MB 分块，以 URL 路径为键，和节点、签名无关；同一块排队或下载中时只有一个任务。
 - 两级优先级：播放器在等的块（一个请求覆盖的块一起排，最多 32 块）和预读。普通并发池先拿紧急块再拿预读；另有一个只拉紧急块的小池子，预读占满时也不用排队。
 - 2.5 秒对冲：紧急块 2.5 秒没拉完就向另一个节点再拉一份，先到的生效并**取消另一路**（Python 版不取消）。对冲不占并发名额。
@@ -99,12 +103,26 @@
 ### 真实播放器：`node tests/play_ext_test.mjs player`
 结果见上面「结论」。测试时用 `player.requestQuality()` 锁定最高画质，并先回到 0 秒（登录后播放器会跳到「上次看到」的位置）。
 
+### 番剧页、列表页、切换分 P 和清晰度：`node tests/play_ext_test.mjs nav`，全部通过
+2026-10-29，同样的环境，中档、2 倍速。每个场景先播 40 秒（过了预读的热身期），再用播放器自己的接口切换（`player.next()`、`player.requestQuality()`；番剧页的 `next()` 不换集，改成点选集列表里的下一集），接着播 30 秒。
+
+| 场景 | 切换后 | 旧的流在切换后又拉了 |
+|---|---|---|
+| 切换分 P（BV1Q24y1j7YT P1 → P2） | 0.7 秒开始播放，不卡，360P → 1080P | 0 块 |
+| 切换清晰度（1080P+ → 1080P） | 0.2 秒，不卡 | 0 块 |
+| 列表页（UP 主的视频列表，下一个视频） | 1.8 秒，卡 1 次 1.0 秒 | 0 块 |
+| 番剧页（邻座的怪同学 第 1 集 → 第 2 集） | 0.7 秒，不卡 | 0 块 |
+
+- 四个场景都是播放器自己发出的 m4s XHR 为 0、退回直连 0、未接管 0：单页跳转（切分 P、列表里的下一个、换集）后 `page.js` 还在，新的流照样被接管。
+- 番剧页的播放器对象和视频页一样（`window.player`），请求方式也一样；正片之外的片头等流也被接管。
+- 原来担心切换后旧的流排着的预读还会继续拉、和新的流抢并发（预读队列是全局先进先出的），实测没有发生：切换时旧的流的预读已经拉完，切换后 0 块，所以没有改调度。
+- 卡顿只算「画面没在走、而且前面缓冲不到 1.5 秒」：无头 Chrome 软件解码 4K 2 倍速时画面偶尔会顿一下，那时缓冲是满的，不是网络问题。
+
 ### 还要你在自己的 Chrome 里确认
-无头 Chrome 测不了的：真实的 4K 画面和声音、弹出页和角标的样子、长时间播放、番剧页和列表页、切换分 P 和清晰度。
+无头 Chrome 测不了的：真实的 4K 画面和声音、弹出页和角标的样子、长时间播放、稍后再看和收藏夹这类列表页、付费番剧。
 
 ## 没做 / 已知问题
 - 后台标签页里定时器会被限流，对冲和超时会变迟钝（有声音的标签页不受「密集限流」影响）。
 - 嵌入播放器（`player.bilibili.com`）、直播不在范围内。
 - 每个标签页各自一份缓存和节点测速，开多个视频页时内存按标签页叠加。
-- `bilidl_play.py`（本地代理）的挑节点还是旧规则（前 3 名随机），按计划它会被这个插件替代，所以没有同步改。
 - 统计上报（`data.bilibili.com`）的网址参数里也会带 `.m4s`，只按路径判断，不算进「未接管」。
