@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --fg: #18191c; --sub: #61666d; --line: #e3e5e7; --accent: #00a1d6; --bg: #fff; --warn: #f25d8e; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e3e5e7; --sub: #9499a0; --line: #2f3134; --bg: #17181a; } }
+  body { margin: 0; width: 320px; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; color: var(--fg); background: var(--bg); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 15px; }
+  .switch { position: relative; width: 36px; height: 20px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; border-radius: 10px; background: #c9ccd0; cursor: pointer; transition: .2s; }
+  .switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; border-radius: 50%; background: #fff; transition: .2s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::before { transform: translateX(16px); }
+  section { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  section:last-child { border-bottom: 0; }
+  .label { color: var(--sub); margin-bottom: 6px; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { flex: 1; padding: 5px 0; border: 0; background: none; color: var(--fg); font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .hint { color: var(--sub); font-size: 12px; margin-top: 6px; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .row b { font-weight: 600; }
+  .row > span { white-space: nowrap; }
+  .big { font-size: 20px; font-weight: 600; }
+  .muted { color: var(--sub); }
+  .warn { color: var(--warn); }
+  ul { margin: 4px 0 0; padding: 0; list-style: none; }
+  li { display: flex; justify-content: space-between; }
+  details summary { cursor: pointer; color: var(--sub); }
+  pre { margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; color: var(--sub); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚡ 播放加速</h1>
+  <label class="switch"><input type="checkbox" id="enabled"><span></span></label>
+</header>
+<section>
+  <div class="label">加速档位</div>
+  <div class="seg" id="profiles">
+    <button data-p="low">低</button><button data-p="mid">中</button><button data-p="high">高</button>
+  </div>
+  <div class="hint" id="profileHint"></div>
+</section>
+<section id="status"><span class="muted">正在读取…</span></section>
+<script src="popup.js"></script>
+</body>
+</html>

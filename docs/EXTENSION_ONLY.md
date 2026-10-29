@@ -51,6 +51,8 @@ BV1bE41127s6 P1 的 4K 视频流，每个请求 1 MB Range，每组 8 秒（MB/s
 - 接管的写法：继承 `XMLHttpRequest`，在 `send` 里自己 `fetch`，完成后用 `Object.defineProperty` 在实例上覆盖 `readyState` / `status` / `response`，再依次派发 `readystatechange`、`progress`、`load`、`loadend`。播放器调用 `abort()` 时取消自己的 fetch。任何一步出错就调用原来的 `send`，等于退回直连。
 
 ## 没验证的（做正式版时要测）
+> 2026-10-29 更新：播放加速的正式版已经做成 `extension-play/`，下面前两条已验证，结果见 [PLAY_EXTENSION.md](PLAY_EXTENSION.md)。
+
 - 登录后的 4K / 倍速 / 跳转 / 长时间播放；正式版要把 bilidl_play.py 的分块缓存、两级优先级、2.5 秒对冲、按实测速度挑节点、倍速自适应预读窗口移植成 JS，用 play_bench 那套场景重新比较。
 - 插件里 `"world": "MAIN"`、`document_start` 的内容脚本能否保证早于播放器脚本运行（CDP 的 `addScriptToEvaluateOnNewDocument` 是保证的）。
 - 番剧页、列表页、嵌入播放器。
