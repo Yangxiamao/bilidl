@@ -143,7 +143,7 @@ async function main() {
   const base = info.video.find(x => new URL(x).hostname.startsWith("upos-") && x.includes(".bilivideo.com")) || info.video[0];
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "bilidl-spike-"));
   const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
-    "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", `--user-agent=${UA}`,
+    "--no-first-run", "--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "--mute-audio", `--user-agent=${UA}`,
     "about:blank"], { stdio: "ignore" });
   try {
     let ver;

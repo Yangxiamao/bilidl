@@ -23,7 +23,7 @@ api = bilidl.Api(); _, _, pages = bilidl.video_meta(api, sys.argv[2])
 dash = bilidl.playurl(api, sys.argv[2], pages[0][2])["dash"]
 v, a = bilidl.pick_streams(dash, 120)
 print(json.dumps({"video": [v.get("baseUrl")] + (v.get("backupUrl") or []), "audio": a and a.get("baseUrl"),
-                  "qn": v["id"], "bandwidth": v["bandwidth"], "fast": bilidl.FAST_HOSTS}))`;
+                  "qn": v["id"], "bandwidth": v["bandwidth"], "duration": dash["duration"], "fast": bilidl.FAST_HOSTS}))`;
   return JSON.parse(execFileSync("python", ["-I", "-c", py, ROOT, bvid], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
 }
 

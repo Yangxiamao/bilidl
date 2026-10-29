@@ -17,3 +17,6 @@ config.json.tmp
 # Python
 __pycache__/
 *.pyc
+
+# 插件打包产物（node tools/build_ext.mjs）
+dist/
