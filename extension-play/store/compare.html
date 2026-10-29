@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- Chrome 应用商店的截图（1280x800）：直连和插件的卡顿对比，数据来自 docs/PLAY_EXTENSION.md 的「结论」。由 tools/make_icons.mjs 渲染成 jpg -->
+<style>
+  :root { --surface: #fcfcfb; --ink: #1d2129; --ink2: #4e5561; --muted: #858b96; --grid: #e6e7ea;
+          --direct: #5b84c9; --ext: #f0612e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 1280px; height: 800px; background: var(--surface); color: var(--ink);
+         font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; overflow: hidden; }
+  .wrap { padding: 56px 72px 0; }
+  .head { display: flex; align-items: center; gap: 20px; }
+  .head img { width: 72px; height: 72px; margin: -8px; }
+  h1 { margin: 0; font-size: 40px; font-weight: 700; letter-spacing: .5px; }
+  .sub { margin: 10px 0 0; font-size: 20px; color: var(--ink2); }
+  .legend { display: flex; gap: 28px; margin: 34px 0 18px; font-size: 18px; color: var(--ink2); }
+  .legend span { display: inline-flex; align-items: center; gap: 10px; }
+  .legend i { width: 28px; height: 12px; border-radius: 0 4px 4px 0; display: inline-block; }
+  .chart { position: relative; }
+  .row { display: grid; grid-template-columns: 230px 1fr; align-items: center; height: 104px; border-top: 1px solid var(--grid); }
+  .row:last-of-type { border-bottom: 1px solid var(--grid); }
+  .phase { font-size: 22px; font-weight: 600; }
+  .phase small { display: block; font-size: 15px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  .bars { position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+  .bar { position: relative; height: 22px; display: flex; align-items: center; }
+  .bar b { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+  .bar.zero b { width: 3px !important; border-radius: 0; }
+  .bar em { font-style: normal; font-size: 17px; color: var(--ink); margin-left: 12px; white-space: nowrap; }
+  .bar.d b { background: var(--direct); }
+  .bar.e b { background: var(--ext); }
+  .axis { display: grid; grid-template-columns: 230px 1fr; font-size: 14px; color: var(--muted); margin-top: 6px; }
+  .ticks { position: relative; height: 20px; }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  .foot { position: absolute; left: 72px; right: 72px; bottom: 30px; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <img src="icon.svg" alt="">
+    <div>
+      <h1>B 站 4K 视频，倍速、跳转都不卡</h1>
+      <p class="sub">同一网络、同一个 4K 视频，B 站自己的播放器：直连 vs 装了插件（中档）。条越短越好。</p>
+    </div>
+  </div>
+  <div class="legend"><span><i style="background:var(--direct)"></i>直连（不装插件）</span><span><i style="background:var(--ext)"></i>装了 bilidl 播放加速</span></div>
+  <div class="chart" id="chart"></div>
+  <div class="axis"><span></span><div class="ticks" id="ticks"></div></div>
+</div>
+<div class="foot">卡顿时间（秒）。2026-10-29 实测：日本的家庭网络，登录账号，BV1bE41127s6（4K 2880×2160），Chrome 156。不同网络、不同时间的结果会不一样。</div>
+<script>
+  // [阶段, 时长秒, [直连卡顿秒, 说明], [插件卡顿秒, 说明]]；「一直卡住」按整个阶段算
+  const ROWS = [
+    ["1 倍速", 25, [0, "不卡，但缓冲最少只剩 3 秒"], [0, "不卡，缓冲 ≥ 32 秒"]],
+    ["切到 2 倍速", 30, [10.2, "卡 4 次，共 10.2 秒"], [0, "不卡，缓冲 ≥ 70 秒"]],
+    ["跳到 60%，2 倍速", 25, [25, "一直卡住，25 秒里只播了 1 秒"], [0.4, "卡 1 次，0.4 秒"]],
+    ["切到 3 倍速", 25, [25, "一直卡住"], [0, "不卡，缓冲 ≥ 69 秒"]],
+  ];
+  const MAX = 30, W = 1280 - 72 * 2 - 230 - 300;  // 右边给标签留 300px
+  const px = s => Math.round(s / MAX * W);
+  const chart = document.getElementById("chart");
+  for (const [name, dur, d, e] of ROWS) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<div class="phase">${name}<small>${dur} 秒</small></div><div class="bars">` +
+      [["d", d], ["e", e]].map(([k, [s, t]]) => `<div class="bar ${k}${s ? "" : " zero"}"><b style="width:${px(s)}px"></b><em>${t}</em></div>`).join("") +
+      `</div>`;
+    chart.append(row);
+  }
+  const ticks = document.getElementById("ticks");
+  for (let s = 0; s <= MAX; s += 10) ticks.insertAdjacentHTML("beforeend", `<span style="left:${px(s)}px">${s}</span>`);
+</script>
+</body>
+</html>

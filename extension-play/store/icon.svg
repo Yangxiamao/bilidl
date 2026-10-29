@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- 播放加速插件的图标：暖色圆角方块 + 白色播放三角 + 左侧三道速度线。四周留 16px 透明边（Chrome 应用商店的要求） -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffa21a"/>
+      <stop offset="1" stop-color="#ff4d6d"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="96" height="96" rx="24" fill="url(#g)"/>
+  <path d="M58 41 L91 64 L58 87 Z" fill="#fff" stroke="#fff" stroke-width="8" stroke-linejoin="round"/>
+  <g stroke="#fff" stroke-width="7" stroke-linecap="round" opacity=".9">
+    <line x1="33" y1="50" x2="46" y2="50"/>
+    <line x1="28" y1="64" x2="46" y2="64"/>
+    <line x1="33" y1="78" x2="46" y2="78"/>
+  </g>
+</svg>
