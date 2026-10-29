@@ -1,6 +1,6 @@
 // 挑节点：B 站 CDN 的节点列表和按实测速度排序，播放加速插件和以后的下载插件共用（打包时复制进各插件，见 tools/build_ext.mjs）。
-// FAST_HOSTS、HostHealth 和 bilidl.py 的同名部分是同一套规则，改一边时记得同步另一边；pick 比 bilidl_play.py 的 _pick 新
-//（按速度加权，见 docs/PLAY_EXTENSION.md）。原理和实测见 docs/PLAYBACK.md。
+// FAST_HOSTS 和「连续失败 3 次冷却 60 秒」与 bilidl.py（下载）一致，改一边时记得同步另一边；按实测速度排序和 pick
+//（按速度加权）只有插件用，原理和实测见 docs/PLAY_EXTENSION.md。
 
 // upos 链接的签名在 query 里，换域名照样有效（akamai 的链接也一样）。节点会下线、速度也常变，这里的顺序只是初始值
 export const FAST_HOSTS = ["upos-sz-mirror08ct.bilivideo.com",

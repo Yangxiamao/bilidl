@@ -17,7 +17,7 @@
   - 每个连接下载 1~2 MB 后会被服务器断开，所以按 1 MB 分段，用 Range 请求，失败后自动重试。
   - 签名链接会过期，遇到 403/404 时要重新请求 playurl 刷新链接。
   - 每个连接单独限速，详见 SPEEDUP.md。
-  - 节点会下线、速度也常变（08c 在 2026-10 已解析不到）；网页播放器的请求全走一条 HTTP/2 连接，所以在线播放会卡。详见 [PLAYBACK.md](PLAYBACK.md)。
+  - 节点会下线、速度也常变（08c 在 2026-10 已解析不到）；网页播放器的请求全走一条 HTTP/2 连接，所以在线播放会卡。详见 [PLAYBACK.md](PLAYBACK.md)，现在的做法见 [PLAY_EXTENSION.md](PLAY_EXTENSION.md)。
 - **urllib 的 timeout**：超时是按每个解析出的 IP 分别计算的。CDN 域名往往有多个 IP，一个不通的节点可能卡住 100 多秒。所以获取文件大小时要同时请求所有节点。
 - **Windows / PowerShell**：
   - 用 `python -c "..."` 传复杂代码时，PowerShell 会吃掉其中的引号，最好写成 .py 文件再运行。

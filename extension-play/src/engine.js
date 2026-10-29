@@ -1,4 +1,4 @@
-// 播放加速的缓存和调度：bilidl_play.py 的 JS 版，跑在 bilibili.com 页面里（每个标签页一份）。
+// 播放加速的缓存和调度（由已删除的本地代理 bilidl_play.py 移植而来），跑在 bilibili.com 页面里（每个标签页一份）。
 // 播放器的一个分段请求被拆成 1 MB 的块，从实测最快的几个节点并发拉取；同时按播放器的取数速度预读约 90 秒。
 // CDN 按单个请求（HTTP/2 stream）限速，所以同一条连接上的并发请求也能叠加速度（见 docs/EXTENSION_ONLY.md）。
 // 这里不碰 XHR 和 DOM，fetch 由外面传进来，可以在 Node 里离线测试（tests/play_engine_test.mjs）。

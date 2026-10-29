@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const BVID = process.argv[2] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会，和 play_bench.py 一样
+const BVID = process.argv[2] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会，和 play_ext_test.mjs 一样
 const SEC = Number(process.argv[3] || 8);
 const MB = 1 << 20;
 const HEADERS = { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
