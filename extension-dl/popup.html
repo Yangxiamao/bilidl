@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>bilidl 下载</title>
+<style>
+  :root { --fg: #18191c; --sub: #61666d; --line: #e3e5e7; --accent: #00a1d6; --bg: #fff; --warn: #f25d8e; --track: #e3e5e7; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e3e5e7; --sub: #9499a0; --line: #2f3134; --bg: #17181a; --track: #2f3134; } }
+  body { margin: 0; width: 360px; overflow-x: hidden; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; color: var(--fg); background: var(--bg); }
+  body.tab { width: auto; max-width: 560px; margin: 24px auto; padding: 0 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 15px; white-space: nowrap; }
+  section { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  section:last-child { border-bottom: 0; }
+  .title { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .row > * { min-width: 0; }
+  .row > #quality { flex: 2; }
+  select { flex: 1; width: 100%; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  button { font: inherit; border: 1px solid var(--line); background: none; color: var(--fg); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 6px 14px; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.link { border: 0; padding: 0; color: var(--accent); }
+  .muted { color: var(--sub); }
+  .warn { color: var(--warn); }
+  .hint { color: var(--sub); font-size: 12px; margin-top: 6px; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: 0; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 4px; background: var(--track); border-radius: 2px; margin: 5px 0 3px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--sub); font-size: 12px; }
+  .meta .acts { display: flex; gap: 10px; }
+  .err { color: var(--warn); font-size: 12px; word-break: break-all; }
+  .foot { display: flex; justify-content: space-between; gap: 8px; color: var(--sub); font-size: 12px; }
+  .foot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header><h1>⬇ B 站下载</h1><span class="muted" id="login"></span></header>
+<section id="video"><span class="muted">正在读取…</span></section>
+<section id="settings" hidden></section>
+<section><ul id="tasks"></ul><div class="muted" id="empty">还没有下载任务。</div></section>
+<section class="foot"><span id="where"></span><span><button class="link" id="change">更改</button> · <button class="link" id="clear">清除已完成</button></span></section>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

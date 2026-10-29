@@ -1,6 +1,6 @@
 """测速：下载一个分P的视频流（默认 1080P），N 秒后取消或下完为止，报告速度和各节点命中次数。
 
-用法: speed_bench.py <输出目录> <秒数> [线程数] [BV号] [分P]
+用法: speed_bench.py <输出目录> <秒数> [线程数] [BV号] [分P] [清晰度 qn，默认 80 即 1080P；120 是 4K]
 例如: speed_bench.py %TEMP%\\bench 25 16
 默认视频是 BV1Q24y1j7YT 的 P1。视频较短时可能不到 N 秒就下完，这时按"首字节到下完"的平均速度报告。
 测完请删除输出目录（里面会有一个预分配了完整大小的 .m4s 文件）。
@@ -13,7 +13,7 @@ out, secs = sys.argv[1], float(sys.argv[2])
 workers = int(sys.argv[3]) if len(sys.argv) > 3 else None
 bvid = sys.argv[4] if len(sys.argv) > 4 else "BV1Q24y1j7YT"
 page = int(sys.argv[5]) if len(sys.argv) > 5 else 1
-QN = 80  # 1080P；不可用时（例如未登录）自动取最高可用清晰度
+QN = int(sys.argv[6]) if len(sys.argv) > 6 else 80  # 1080P；不可用时（例如未登录）自动取最高可用清晰度
 os.makedirs(out, exist_ok=True)
 
 logs = []

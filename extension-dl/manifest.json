@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "bilidl 下载",
+  "version": "0.1.0",
+  "description": "下载 B 站视频（最高 4K / 8K，视频和音频合成一个 mp4）。多路并发、断点续传，不需要安装其他程序。",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "permissions": ["storage", "unlimitedStorage", "offscreen", "downloads", "activeTab", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["https://api.bilibili.com/*", "https://*.bilivideo.com/*", "https://*.akamaized.net/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_icon": { "16": "icons/16.png", "48": "icons/48.png" } }
+}
