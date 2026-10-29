@@ -44,7 +44,8 @@ async function main() {
     fs.rmSync(zip, { force: true });
     // Windows 10+ 和 macOS 自带的 bsdtar 能打 zip；Windows 上 PATH 里可能先是 Git 带的 GNU tar（不会打 zip），所以写全路径
     const tar = process.platform === "win32" ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
-    execFileSync(tar, ["-a", "-cf", path.relative(OUT, zip), "."], { cwd: OUT });
+    // 列出顶层文件名而不是写 "."：否则 zip 里的路径都带 "./" 前缀，上传商店时不保证能认出根目录的 manifest.json
+    execFileSync(tar, ["-a", "-cf", path.relative(OUT, zip), ...fs.readdirSync(OUT)], { cwd: OUT });
     console.log("已打包", zip);
   }
 }
