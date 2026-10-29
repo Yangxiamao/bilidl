@@ -1,9 +1,10 @@
 // 播放加速插件（extension-play/）的端到端验收：用临时 profile 启动无头 Chrome，加载打包好的插件，打开真实的 B 站视频页。
 //   correct：在页面里用 XHR 发各种 Range，接管返回的数据和直连逐字节比较；认不出的请求原样放行；插件的 fetch 全部失败时退回直连。
-//   bench：  在页面里按 tests/play_bench.py 的模型模拟播放器（1x → 2x → 跳到 60% → 3x），比较插件关闭（直连）和开启时的卡顿。
+//   bench：  在页面里模拟播放器（一次取一个约 2 秒的分段，缓冲到 72 秒停；1x → 2x → 跳到 60% → 3x），比较插件关闭（直连）和开启时的卡顿。
 //   player： 真实播放器按同样的四个阶段改倍速、跳转，按 waiting 事件统计卡顿，开启和关闭各一次。
+//   nav：    番剧页、列表页、切换分P、切换清晰度（只开插件）：都被接管、不退回直连、不卡，切换后旧的流不再继续预读。
 // 会把仓库根目录 sessdata.txt 里的登录 cookie 写进临时 profile（测完连同 profile 删掉），好拿到 4K。
-// 用法: node tests/play_ext_test.mjs [correct|bench|player|all] [BV号] [档位 low|mid|high] [--only-on]
+// 用法: node tests/play_ext_test.mjs [correct|bench|player|nav|all] [BV号] [档位 low|mid|high] [--only-on]
 // 品牌版 Chrome 137 起不支持 --load-extension，这里用 --remote-debugging-pipe + Extensions.loadUnpacked。
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -16,7 +17,7 @@ import { build } from "../tools/build_ext.mjs";
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2).filter(a => !a.startsWith("--"));
 const MODE = args[0] || "all";
-const BVID = args[1] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会，和 play_bench.py 一样
+const BVID = args[1] || "BV1bE41127s6";  // 约 2.5 小时的 4K 演唱会
 const PROFILE = args[2] || "mid";
 const ONLY_ON = process.argv.includes("--only-on");
 const VERBOSE = process.argv.includes("--verbose");  // bench 时每 2 秒打印一次插件状态
@@ -24,7 +25,7 @@ const CHROME = process.env.CHROME || "C:/Program Files/Google/Chrome/Application
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
 const MB = 1 << 20;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// (说明, 倍速, 时长秒, 跳转到的比例或 null)，和 play_bench.py 一样
+// (说明, 倍速, 时长秒, 跳转到的比例或 null)
 const PHASES = [["1x", 1, 25, null], ["切到 2x", 2, 30, null], ["跳到 60% 后 2x", 2, 25, 0.6], ["切到 3x", 3, 25, null]];
 
 // ---------- CDP（走 --remote-debugging-pipe：fd 3 写命令，fd 4 读结果，消息以 \0 分隔） ----------
@@ -220,7 +221,7 @@ async function correct(b, info) {
   return bad;
 }
 
-// ---------- bench：页面里的模拟播放器（模型同 play_bench.py） ----------
+// ---------- bench：页面里的模拟播放器（模型同旧的 play_bench.py，见 docs/PLAYBACK.md） ----------
 const SIM_JS = `async (url, size, bps, phases, withStats) => {
   const BUFFER_SEC = 72, SEG_SEC = 2, START_SEC = 2, RESUME_SEC = 1, CHUNK = ${MB};
   const s = { play: 0, fetch: 0, speed: 1, playing: false, stallT0: null, stop: false };
@@ -392,6 +393,128 @@ async function player(b) {
   }
 }
 
+// ---------- nav：番剧页、列表页、切换分P、切换清晰度 ----------
+// 多P视频 BV1Q24y1j7YT（4K，2 个分P 各约 3 分钟），列表页用它的 UP 主的视频列表；番剧用一部免费的（邻座的怪同学）。
+// 每个场景：2 倍速播放 40 秒（过了预读的热身期，窗口已经放大），再用播放器自己的接口切换，接着播 30 秒。
+const NAV = [
+  { name: "切换分P", url: "https://www.bilibili.com/video/BV1Q24y1j7YT/?p=1", act: "next" },
+  { name: "切换清晰度", url: "https://www.bilibili.com/video/BV1Q24y1j7YT/?p=1", act: "quality" },
+  { name: "列表页", url: "https://www.bilibili.com/list/231617929?bvid=BV1Q24y1j7YT", act: "next" },
+  { name: "番剧页", url: "https://www.bilibili.com/bangumi/play/ep12514", act: "ep" },
+];
+// 切换时已经在飞的预读允许拉完，所以切换 5 秒以后旧的流最多再拉「普通并发数」块
+const NAV_STALE_MAX = { low: 6, mid: 12, high: 24 };
+
+// 页面里装一个监视器：每 250 ms 看一次视频有没有在走（切分P时 video 元素可能换掉，所以每次重新找），
+// 一直保持静音和倍速（切换后播放器会把倍速改回 1x）。__snap() 返回上次以来的统计并清零。
+// 只把「没在走、而且前面缓冲不到 1.5 秒」算成卡顿：无头 Chrome 软件解码 4K 2 倍速时偶尔会顿一下，那时缓冲是满的，不是网络的问题
+const MON_JS = `(rate) => {
+  const now = () => performance.now() / 1000;
+  const ahead = v => { for (let i = 0; i < v.buffered.length; i++)
+    if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime <= v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
+    return 0; };
+  const m = { rate, last: null, lastT: now(), t0: now(), started: null, stalls: 0, stallTime: 0, inStall: false, played: 0, err: null,
+              hiccup: 0 };
+  setInterval(() => {
+    const v = document.querySelector("video");
+    const t = now(), dt = t - m.lastT;
+    m.lastT = t;
+    if (!v) return;
+    v.muted = true;
+    if (v.playbackRate !== m.rate) v.playbackRate = m.rate;
+    if (v.paused && !v.ended) v.play().catch(() => {});
+    if (v.error) m.err = v.error.code;
+    const moved = m.last != null && v.currentTime !== m.last && Math.abs(v.currentTime - m.last) < 5;
+    if (moved) {
+      m.played += v.currentTime - m.last;
+      if (m.started == null) m.started = t - m.t0;
+      m.inStall = false;
+    } else if (m.started != null && !v.ended && ahead(v) < 1.5) {
+      if (!m.inStall) { m.inStall = true; m.stalls++; }
+      m.stallTime += dt;
+    } else if (m.started != null && !v.ended) {
+      m.hiccup += dt;
+    }
+    m.last = v.currentTime;
+  }, 250);
+  window.__snap = () => {
+    const v = document.querySelector("video") || {};
+    const out = { started: m.started, stalls: m.stalls, stallTime: +m.stallTime.toFixed(1), played: +m.played.toFixed(1), err: m.err,
+                  hiccup: +m.hiccup.toFixed(1), res: v.videoWidth + "x" + v.videoHeight,
+                  url: (location.pathname + location.search).replace(/[?&](vd_source|spm_id_from|from_spmid|oid)=[^&]*/g, "").replace(/^([^?]*)&/, "$1?") };
+    Object.assign(m, { t0: now(), started: null, stalls: 0, stallTime: 0, inStall: false, played: 0, hiccup: 0 });
+    return out;
+  };
+}`;
+
+// 切换：next 用播放器自己的「下一个」（分P、列表里的下一个视频）；ep 点选集列表里的下一集（番剧页的 next() 不换集）；
+// quality 换一档清晰度（自动画质时 nowQ 是 0，按实际播放的 realQ 算）
+const ACT_JS = `(act) => {
+  const p = window.player;
+  if (act === "next") { p.next(); return "下一个"; }
+  if (act === "ep") {
+    const cur = location.pathname.match(/ep\\d+/)?.[0];
+    const links = [...document.querySelectorAll('a[href*="/bangumi/play/ep"]')];
+    const i = links.findIndex(a => a.getAttribute("href").includes(cur));
+    const next = links.slice(i + 1).find(a => !a.getAttribute("href").includes(cur));
+    next.click();
+    return "点下一集 " + next.getAttribute("href");
+  }
+  const q = p.getQuality(), cur = q.nowQ || q.realQ, list = p.getSupportedQualityList();
+  const qn = list.find(x => x < cur && x >= 64) || list.find(x => x !== cur);
+  p.requestQuality(qn);
+  return "清晰度 " + cur + " → " + qn;
+}`;
+
+async function nav(b) {
+  console.log(`\n## 番剧页、列表页、切换分P、切换清晰度（档位 ${PROFILE}，2 倍速）`);
+  await b.config({ playEnabled: true, playProfile: PROFILE });
+  let bad = 0;
+  const check = (ok, msg) => { if (!ok) { bad++; console.log("    失败:", msg); } };
+  for (const sc of NAV) {
+    const { sid, targetId, net } = await b.open(sc.url);
+    await sleep(8000);
+    await evaluate(b.cdp, sid, `(${MON_JS})(2)`);
+    await sleep(40000);
+    const before = await evaluate(b.cdp, sid, "__snap()");
+    const st0 = await evaluate(b.cdp, sid, STATS_JS);
+    const what = await evaluate(b.cdp, sid, `(${ACT_JS})(${JSON.stringify(sc.act)})`);
+    const tAct = Date.now();
+    await sleep(5000);
+    const st1 = await evaluate(b.cdp, sid, STATS_JS);
+    await sleep(25000);
+    const st2 = await evaluate(b.cdp, sid, STATS_JS);
+    const since = (Date.now() - tAct) / 1000;
+    const after = await evaluate(b.cdp, sid, "__snap()");
+    await b.close(targetId);
+
+    // 新的流：切换后才出现的；旧的流：切换前就有、切换后再没被请求过的（换清晰度时音频不变，不算旧的）。
+    // 不能按「最近 10 秒用过」判断：播放器缓冲满 72 秒后就不再请求，正在播放的流也会闲着
+    const r2 = new Map(st2.resources.map(r => [r.name, r]));
+    const fresh = [...r2.keys()].filter(n => !st0.resources.some(r => r.name === n));
+    const old = st0.resources.map(r => r.name).filter(n => !r2.has(n) || r2.get(n).idle > since);
+    const fetches = (st, names) => names.reduce((s, n) => s + (st.resources.find(r => r.name === n)?.fetches || 0), 0);
+    const early = fetches(st1, old) - fetches(st0, old), stale = fetches(st2, old) - fetches(st1, old);
+    const short = n => n.replace(/^(\d+).*-(\d+\.m4s)$/, "$1-$2");  // 不同视频的同一种编码 id 相同，前面带上 cid
+    console.log(`  [${sc.name}] ${what}：${before.url} → ${after.url}`);
+    console.log(`    切换前 播放 ${before.played}s，卡顿 ${before.stalls} 次共 ${before.stallTime}s（缓冲够但画面顿住 ${before.hiccup}s），画面 ${before.res}`);
+    console.log(`    切换后 ${after.started != null ? `${after.started.toFixed(1)}s 后开始走` : "一直没走"}，播放 ${after.played}s，` +
+                `卡顿 ${after.stalls} 次共 ${after.stallTime}s（缓冲够但画面顿住 ${after.hiccup}s），画面 ${after.res}${after.err ? `，出错 ${after.err}` : ""}`);
+    console.log(`    旧的流 ${old.map(short).join(", ") || "–"}，新的流 ${fresh.map(short).join(", ") || "–"}；旧的流切换后 5 秒内拉了 ${early} 块、之后 ${stale} 块；` +
+                `内存 ${(st2.mem / MB).toFixed(0)} MB；接管 ${st2.counts.served}，退回 ${st2.counts.fallback}，未接管 ${st2.counts.passed}，` +
+                `播放器自己发的 m4s XHR ${net.xhr}`);
+    check(net.xhr === 0, `播放器自己发了 ${net.xhr} 个 m4s XHR`);
+    check(st2.counts.fallback === 0 && st2.counts.passed === 0, "有退回直连或未接管的请求");
+    check(!before.err && !after.err, "视频出错");
+    check(fresh.length > 0 && fresh.every(n => r2.get(n).fetches > 0), "切换后没有新的流被接管");
+    check(before.url !== after.url || sc.act === "quality", "切换后网址没变");
+    check(after.started != null && after.started < 8 && after.played > 30, "切换后起播太慢或播放不足");
+    check(after.stallTime < 3, `切换后卡顿 ${after.stallTime}s`);
+    check(stale <= NAV_STALE_MAX[PROFILE], `切换后旧的流还在预读（${stale} 块）`);
+  }
+  return bad;
+}
+
 async function main() {
   const info = streamInfo(BVID);
   const b = new Browser();
@@ -401,10 +524,11 @@ async function main() {
     if (MODE === "correct" || MODE === "all") bad += await correct(b, info);
     if (MODE === "bench" || MODE === "all") await bench(b, info);
     if (MODE === "player" || MODE === "all") await player(b);
+    if (MODE === "nav" || MODE === "all") bad += await nav(b);
   } finally {
     await b.stop();
   }
-  if (MODE === "correct" || MODE === "all") console.log(bad ? `\n正确性：${bad} 项失败` : "\n正确性：全部通过");
+  if (["correct", "nav", "all"].includes(MODE)) console.log(bad ? `\n${bad} 项失败` : "\n全部通过");
   process.exit(bad ? 1 : 0);
 }
 
