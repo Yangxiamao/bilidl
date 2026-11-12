@@ -26,7 +26,7 @@
 
 ## 只想在线看不卡？
 
-在 B 站网页上看 4K、开倍速卡顿的话，用同作者的 [bilifast](https://github.com/Yangxiamao/bilifast) 播放加速插件。它只是一个 Chrome 插件，不需要这里的任何程序。
+在 B 站网页上看 4K、开倍速卡顿的话，用同作者的 [bilifast](https://github.com/Yangxiamao/bilifast) 播放加速插件，可以直接从 [Chrome 应用商店](https://chromewebstore.google.com/detail/bilifast-%E6%92%AD%E6%94%BE%E5%8A%A0%E9%80%9F/jdmoabemimmjihndefdocpbgnpjmmhdn)安装。它只是一个 Chrome 插件，不需要这里的任何程序。
 
 ## 声明
 

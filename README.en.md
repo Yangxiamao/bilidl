@@ -26,7 +26,7 @@ Full documentation (in Chinese: CLI options, web UI, autostart, security design,
 
 ## Just want smooth online playback?
 
-If bilibili's web player stalls on 4K or fast playback speeds, use [bilifast](https://github.com/Yangxiamao/bilifast) by the same author. It's a standalone Chrome extension and needs nothing from this repo.
+If bilibili's web player stalls on 4K or fast playback speeds, use [bilifast](https://github.com/Yangxiamao/bilifast) by the same author. It's a standalone Chrome extension, available on the [Chrome Web Store](https://chromewebstore.google.com/detail/bilifast-%E6%92%AD%E6%94%BE%E5%8A%A0%E9%80%9F/jdmoabemimmjihndefdocpbgnpjmmhdn), and needs nothing from this repo.
 
 ## Disclaimer
 

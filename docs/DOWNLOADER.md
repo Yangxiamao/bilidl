@@ -2,7 +2,7 @@
 
 [← 返回 README](../README.md)
 
-下载器的完整说明。只想在 B 站网页上看得流畅、不需要下载的话，装 [bilifast](https://github.com/Yangxiamao/bilifast) 播放加速插件就够了。下载由本机运行的 bilidl-web（Python）完成，`chrome-extension/` 里的下载插件只是在视频页上加一个「下载」按钮，把任务交给它。
+下载器的完整说明。只想在 B 站网页上看得流畅、不需要下载的话，从 [Chrome 应用商店](https://chromewebstore.google.com/detail/bilifast-%E6%92%AD%E6%94%BE%E5%8A%A0%E9%80%9F/jdmoabemimmjihndefdocpbgnpjmmhdn)装 [bilifast](https://github.com/Yangxiamao/bilifast) 播放加速插件就够了。下载由本机运行的 bilidl-web（Python）完成，`chrome-extension/` 里的下载插件只是在视频页上加一个「下载」按钮，把任务交给它。
 
 - **只走 API 和 CDN**：不依赖 www.bilibili.com 主站，主站连不上时也能下载。
 - **多线程分段下载**：B 站 CDN 对每个连接单独限速（每个约 1.5 MB/s），所以默认开 16 个线程，并把链接换到更快的 CDN 节点。在作者的网络环境下，速度从约 2 MB/s 提升到约 24 MB/s。

@@ -26,7 +26,7 @@
 
 ## オンライン再生を快適にしたいだけなら
 
-bilibili の Web プレーヤーが 4K や倍速再生で止まる場合は、同じ作者の [bilifast](https://github.com/Yangxiamao/bilifast) を使ってください。単体の Chrome 拡張機能で、このリポジトリのプログラムは不要です。
+bilibili の Web プレーヤーが 4K や倍速再生で止まる場合は、同じ作者の [bilifast](https://github.com/Yangxiamao/bilifast) を使ってください。単体の Chrome 拡張機能で、[Chrome ウェブストア](https://chromewebstore.google.com/detail/bilifast-%E6%92%AD%E6%94%BE%E5%8A%A0%E9%80%9F/jdmoabemimmjihndefdocpbgnpjmmhdn)からインストールできます。このリポジトリのプログラムは不要です。
 
 ## 免責事項
 
